@@ -46,30 +46,41 @@ def adaface_infer(model, face_aligned):
 
 
 def register(mtcnn, adaface, faces_dir):
+    name_vecs = {}
+    name_bands = {}
+    for band_dir in sorted(glob.glob(os.path.join(faces_dir, "*"))):
+        if not os.path.isdir(band_dir):
+            continue
+        band = os.path.basename(band_dir)
+        for person_dir in sorted(glob.glob(os.path.join(band_dir, "*"))):
+            if not os.path.isdir(person_dir):
+                continue
+            name = os.path.basename(person_dir)
+            name_bands[name] = band
+            for pp in sorted(glob.glob(os.path.join(person_dir, "*"))):
+                if not pp.lower().endswith((".jpg", ".jpeg", ".png")):
+                    continue
+                img = Image.open(pp).convert("RGB")
+                _, faces = mtcnn.align_multi(img)
+                if len(faces) == 0:
+                    print(f"  Warning: no face in {pp}, skipping")
+                    continue
+                if len(faces) > 1:
+                    print(f"  Warning: {len(faces)} faces in {pp}, skipping")
+                    continue
+                name_vecs.setdefault(name, []).append(adaface_infer(adaface, np.array(faces[0])))
+
     names = []
+    bands = []
     feature_vectors = []
-    for person_dir in sorted(glob.glob(os.path.join(faces_dir, "*"))):
-        if not os.path.isdir(person_dir):
-            continue
-        name = os.path.basename(person_dir)
-        vecs = []
-        for pp in sorted(glob.glob(os.path.join(person_dir, "*"))):
-            if not pp.lower().endswith((".jpg", ".jpeg", ".png")):
-                continue
-            img = Image.open(pp).convert("RGB")
-            _, faces = mtcnn.align_multi(img)
-            if len(faces) == 0:
-                print(f"  Warning: no face in {pp}, skipping")
-                continue
-            vecs.append(adaface_infer(adaface, np.array(faces[0])))
-        if len(vecs) == 0:
-            print(f"  Warning: no valid photos for {name}, skipping")
-            continue
+    for name in sorted(name_vecs):
+        vecs = name_vecs[name]
         mean_vec = np.mean(vecs, axis=0)
         names.append(name)
+        bands.append(name_bands.get(name, ""))
         feature_vectors.append(mean_vec)
-        print(f"  Registered: {name} ({len(vecs)} photos)")
-    return names, np.array(feature_vectors) if feature_vectors else np.array([])
+        print(f"  Registered: {name} [{name_bands.get(name, '')}] ({len(vecs)} photos)")
+    return names, bands, np.array(feature_vectors) if feature_vectors else np.array([])
 
 
 def main():
@@ -84,12 +95,12 @@ def main():
     adaface = load_adaface()
 
     print(f"Registering faces from {FACES_DIR}...")
-    names, feature_db = register(mtcnn, adaface, FACES_DIR)
+    names, bands, feature_db = register(mtcnn, adaface, FACES_DIR)
     if len(names) == 0:
         print("Error: no faces registered")
         sys.exit(1)
 
-    np.savez(args.output, names=names, features=feature_db)
+    np.savez(args.output, names=names, bands=bands, features=feature_db)
     print(f"Saved {len(names)} feature vectors to {args.output}")
     print(f"Registered: {names}")
 

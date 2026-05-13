@@ -1,136 +1,196 @@
-# SeiyuFinder
+# SeiyuuMatch
 
-基于 MTCNN 人脸检测对齐 + AdaFace 人脸识别的端到端管线。
+基于 MTCNN 人脸检测对齐 + AdaFace 人脸识别的邦多利女声优相似度识别 Web 应用。
+
+当前功能：
+
+- 上传照片后识别最相似的声优，并展示上传裁脸、匹配声优头像与 Top 5 相似度。
+- 支持按团选择识别范围，默认只启用 `mygo` 与 `avemujica`，这两组当前数据最多、稳定性最高。
+- 支持默认阈值识别与“降低阈值再试一次”二挡识别。
+- 提供隐私提示与数据集贡献入口，用户上传的数据集照片会先进入待审核目录。
+- 支持 Cloudflare Tunnel 暴露到固定域名或临时公网地址。
 
 ## 目录结构
 
 ```
-├── faces/                  # 注册人脸库（每人一个文件夹）
-│   ├── 青木阳菜/           # 文件夹名即人名
-│   │   ├── 1.jpg
-│   │   ├── 2.jpg
-│   │   └── ...
-│   └── ...
+├── faces/                  # 正式人脸库：faces/<团>/<声优>/
+├── faces_upload/           # 用户上传的待审核数据集照片，不提交 Git
+├── uploads/                # 识别历史压缩图与 history.json，不提交 Git
 ├── AdaFace/                # AdaFace 模型仓库
 │   └── pretrained/
 │       └── adaface_ir50_ms1mv2.ckpt
-├── register.py             # 人脸注册脚本
-├── server.py               # HTTP 识别服务
-├── features.npz            # 注册生成的特征文件
+├── register.py             # 注册正式人脸库并生成 features.npz
+├── server.py               # HTTP 识别服务与上传接口
+├── features.npz            # 注册生成的特征文件，包含 names/bands/features
+├── index.html              # 前端页面
+├── crawl_faces.py          # 爬取声优照片辅助脚本
 ├── start_register.zsh      # 注册启动脚本
-├── start_server.zsh        # 服务器启动脚本
-├── run.py                  # 单图离线识别
-├── run_camera.py           # 摄像头实时识别 + HTTP 推流
-├── index.html              # 前端页面（拖拽上传 + 结果展示）
-└── crawl_faces.py          # 爬取声优人脸图片
+├── start_server.zsh        # 服务启动脚本
+└── start_tunnel.zsh        # Cloudflare Quick Tunnel 临时公网脚本
 ```
 
 ## 快速开始
 
 ```bash
-# 1. 创建 conda 环境
-conda create -n seiyufinder python=3.10
-conda activate seiyufinder
-pip install opencv-python numpy torch pytorch-lightning
+# 1. 创建环境
+conda create -n seiyumatch python=3.10
+conda activate seiyumatch
+pip install opencv-python numpy torch pytorch-lightning pillow requests
 
-# 2. 注册人脸
-python3 register.py
+# 2. 注册人脸特征
+./start_register.zsh
 
-# 3. 启动服务器
-python3 server.py
+# 3. 启动服务
+./start_server.zsh
 ```
 
-或使用启动脚本：
+浏览器访问：
+
+```text
+http://localhost:3724
+```
+
+## Cloudflare Tunnel
+
+### 固定域名
+
+在 Cloudflare Zero Trust 中创建 Tunnel 后，将 Public Hostname 指向：
+
+```text
+Type: HTTP
+URL: 127.0.0.1:3724
+```
+
+本机保持以下服务运行：
+
+```bash
+./start_server.zsh
+cloudflared tunnel run --token <Cloudflare 给你的 token>
+```
+
+如果已经用 `cloudflared service install ...` 安装成系统服务，通常只需要启动 Python 服务。
+
+### 临时地址
+
+开发测试时也可以用 Quick Tunnel，不需要域名：
+
+```bash
+brew install cloudflared
+./start_server.zsh
+./start_tunnel.zsh
+```
+
+终端会打印一个 `https://*.trycloudflare.com` 临时地址。
+
+## API
+
+### GET `/`
+
+返回 Web 页面。
+
+### GET `/health`
+
+健康检查：
+
+```json
+{
+  "ok": true,
+  "people": 47
+}
+```
+
+### GET `/face_groups`
+
+返回 `faces/` 中的团、声优列表和照片数量，用于前端选择识别范围与数据集上传。
+
+### POST `/`
+
+上传图片并识别。支持查询参数：
+
+- `bands=mygo,avemujica`：限制识别候选团。
+- `mode=relaxed`：使用低阈值检测人脸。
+
+示例：
+
+```bash
+curl --noproxy localhost \
+  -X POST 'http://localhost:3724/?bands=mygo,avemujica' \
+  --data-binary @photo.jpg
+```
+
+响应包含最相似声优、bbox、当前相似度与 Top 5：
+
+```json
+{
+  "faces": ["羊宮妃那"],
+  "details": [
+    {
+      "name": "羊宮妃那",
+      "band": "mygo",
+      "similarity": 0.7812,
+      "top5": [
+        {"name": "羊宮妃那", "band": "mygo", "similarity": 0.7812}
+      ],
+      "bbox": [0.14, 0.21, 0.44, 0.78]
+    }
+  ],
+  "mode": "default",
+  "bands": ["avemujica", "mygo"]
+}
+```
+
+### POST `/upload_faces`
+
+数据集贡献上传接口。前端会保存到：
+
+```text
+faces_upload/<团>/<声优>/
+```
+
+这些照片不会自动进入正式识别库，需要人工审核后移动到 `faces/`，再重新注册。
+
+## 人脸注册
+
+正式数据放在：
+
+```text
+faces/<团>/<声优>/
+```
+
+例如：
+
+```text
+faces/
+├── mygo/
+│   ├── 羊宮妃那/
+│   │   ├── 1.jpg
+│   │   └── 2.jpg
+│   └── 立石凛/
+└── avemujica/
+    └── 渡瀬結月/
+```
+
+添加或修改正式照片后：
+
 ```bash
 ./start_register.zsh
 ./start_server.zsh
 ```
 
-## API 协议
+`features.npz` 不是热更新，服务启动时只加载一次。
 
-### 端口
+## 爬取照片
 
-默认 `3724`，可通过 `--port` 参数修改。
-
-### GET / — Web 识别页
-
-浏览器访问 `http://localhost:3724` 即可打开前端页面，支持拖拽上传或点击选择图片，识别结果以卡片形式展示，包含匹配声优的头像和姓名。
-
-### POST / — 人脸识别
-
-发送图片，返回图中所有人脸的识别结果。
-
-**请求：**
-
-```
-POST http://localhost:3724
-Content-Type: application/octet-stream
-Body: <图片二进制数据（支持 jpg/png）>
-```
-
-**成功响应（200）：**
-
-```json
-{
-  "faces": ["青木阳菜", "立石凛"]
-}
-```
-
-- `faces`: 数组，每张脸对应最相似的注册人名
-
-**失败响应（500）：**
-
-```json
-{
-  "error": "错误信息"
-}
-```
-
-### 调用示例
+`crawl_faces.py` 从环境变量读取搜索 API 凭据：
 
 ```bash
-# curl
-curl --noproxy localhost -X POST http://localhost:3724 --data-binary @photo.jpg
-
-# Python
-import requests
-with open("photo.jpg", "rb") as f:
-    resp = requests.post("http://localhost:3724", data=f.read())
-    print(resp.json())
+export TAVILY_API_KEY="..."
+export BAIDU_SEARCH_AUTH="Bearer ..."
+python3 crawl_faces.py
 ```
 
-## 人脸注册
+不要把 API key 写入源码。
 
-将照片放入 `faces/<人名>/` 文件夹，每人可放任意数量照片（推荐 3 张以上），支持 jpg/png 格式。
+## 隐私说明
 
-```bash
-faces/
-├── 青木阳菜/
-│   ├── 1.jpg
-│   ├── 2.jpg
-│   └── 3.png
-├── 立石凛/
-│   └── 1.jpg
-```
-
-添加或修改照片后需重新注册：
-
-```bash
-python3 register.py
-```
-
-注册流程：MTCNN 检测并对齐人脸 → AdaFace 提取 512 维特征 → 同人多张取均值 → 保存到 `features.npz`。
-
-## 预置特征
-
-仓库中已包含 MyGO!!!!! 五位声优的注册特征（`features.npz`）：
-
-| 角色 | 声优 |
-|------|------|
-| 高松灯 | 羊宫妃那 |
-| 千早爱音 | 立石凛 |
-| 要乐奈 | 青木阳菜 |
-| 长崎爽世 | 小日向美香 |
-| 椎名立希 | 林鼓子 |
-
-启动服务后可直接使用，无需重新注册。
+识别功能会把用户选择的图片上传到服务器进行处理，并保存一份压缩后的历史记录。数据集贡献入口会把照片保存到 `faces_upload/` 待审核目录。请不要上传敏感照片、他人隐私照片，或没有权利处理的图片。

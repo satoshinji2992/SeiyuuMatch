@@ -19,6 +19,7 @@ AdaFace/__pycache__/
 
 # User data
 uploads/
+faces_upload/
 results/
 faces/
 tests/
