@@ -23,7 +23,6 @@
 ├── server.py               # HTTP 识别服务与上传接口
 ├── features.npz            # 注册生成的特征文件，包含 names/bands/features
 ├── index.html              # 前端页面
-├── crawl_faces.py          # 爬取声优照片辅助脚本
 ├── start_register.zsh      # 注册启动脚本
 ├── start_server.zsh        # 服务启动脚本
 └── start_tunnel.zsh        # Cloudflare Quick Tunnel 临时公网脚本
@@ -178,18 +177,6 @@ faces/
 ```
 
 `features.npz` 不是热更新，服务启动时只加载一次。
-
-## 爬取照片
-
-`crawl_faces.py` 从环境变量读取搜索 API 凭据：
-
-```bash
-export TAVILY_API_KEY="..."
-export BAIDU_SEARCH_AUTH="Bearer ..."
-python3 crawl_faces.py
-```
-
-不要把 API key 写入源码。
 
 ## 隐私说明
 
