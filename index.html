@@ -93,11 +93,10 @@
             align-items: center;
             gap: 6px;
             justify-content: center;
-            min-width: 112px;
-            height: 42px;
-            padding: 5px 10px;
+            min-height: 34px;
+            padding: 0 10px;
             border: 1px solid #34344f;
-            border-radius: 12px;
+            border-radius: 17px;
             background: #101020;
             color: #d6d6e6;
             font-size: 13px;
@@ -121,25 +120,12 @@
             border-color: rgba(196, 77, 255, 0.65);
         }
 
-        .band-logo {
-            max-width: 52px;
-            max-height: 24px;
-            object-fit: contain;
-            display: block;
-        }
-
         .band-option-name {
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 700;
             line-height: 1;
             color: #d6d6e6;
             white-space: nowrap;
-        }
-
-        .band-logo-fallback {
-            font-size: 12px;
-            font-weight: 700;
-            color: #d6d6e6;
         }
 
         .band-option.recommended {
@@ -1039,7 +1025,6 @@
                 return `
       <label class="band-option${recommended}" title="${band}">
         <input type="checkbox" name="recognitionBand" value="${band}" ${checked}>
-        ${renderBandIcon(band)}
         <span class="band-option-name">${band}</span>
       </label>
     `;
