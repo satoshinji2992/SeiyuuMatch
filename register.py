@@ -16,6 +16,19 @@ MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "AdaFace/pretrained/adaface_ir50_ms1mv2.ckpt",
 )
+EXTRA_PERSON_BANDS = {
+    "佐々木李子": ["sumimi"],
+}
+
+
+def person_bands(name, primary_band):
+    bands = [primary_band]
+    bands.extend(EXTRA_PERSON_BANDS.get(name, []))
+    return sorted(dict.fromkeys(b for b in bands if b))
+
+
+def encode_bands(bands):
+    return ",".join(bands)
 
 
 def load_adaface():
@@ -45,6 +58,23 @@ def adaface_infer(model, face_aligned):
     return feature[0].numpy()
 
 
+def collect_person_vectors(mtcnn, adaface, person_dir):
+    vecs = []
+    for pp in sorted(glob.glob(os.path.join(person_dir, "*"))):
+        if not pp.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue
+        img = Image.open(pp).convert("RGB")
+        _, faces = mtcnn.align_multi(img)
+        if len(faces) == 0:
+            print(f"  Warning: no face in {pp}, skipping")
+            continue
+        if len(faces) > 1:
+            print(f"  Warning: {len(faces)} faces in {pp}, skipping")
+            continue
+        vecs.append(adaface_infer(adaface, np.array(faces[0])))
+    return vecs
+
+
 def register(mtcnn, adaface, faces_dir):
     name_vecs = {}
     name_bands = {}
@@ -56,19 +86,10 @@ def register(mtcnn, adaface, faces_dir):
             if not os.path.isdir(person_dir):
                 continue
             name = os.path.basename(person_dir)
-            name_bands[name] = band
-            for pp in sorted(glob.glob(os.path.join(person_dir, "*"))):
-                if not pp.lower().endswith((".jpg", ".jpeg", ".png")):
-                    continue
-                img = Image.open(pp).convert("RGB")
-                _, faces = mtcnn.align_multi(img)
-                if len(faces) == 0:
-                    print(f"  Warning: no face in {pp}, skipping")
-                    continue
-                if len(faces) > 1:
-                    print(f"  Warning: {len(faces)} faces in {pp}, skipping")
-                    continue
-                name_vecs.setdefault(name, []).append(adaface_infer(adaface, np.array(faces[0])))
+            name_bands[name] = person_bands(name, band)
+            name_vecs.setdefault(name, []).extend(
+                collect_person_vectors(mtcnn, adaface, person_dir)
+            )
 
     names = []
     bands = []
@@ -77,15 +98,70 @@ def register(mtcnn, adaface, faces_dir):
         vecs = name_vecs[name]
         mean_vec = np.mean(vecs, axis=0)
         names.append(name)
-        bands.append(name_bands.get(name, ""))
+        bands.append(encode_bands(name_bands.get(name, [])))
         feature_vectors.append(mean_vec)
-        print(f"  Registered: {name} [{name_bands.get(name, '')}] ({len(vecs)} photos)")
+        print(f"  Registered: {name} [{bands[-1]}] ({len(vecs)} photos)")
     return names, bands, np.array(feature_vectors) if feature_vectors else np.array([])
+
+
+def register_one(mtcnn, adaface, faces_dir, band, name):
+    person_dir = os.path.join(faces_dir, band, name)
+    if not os.path.isdir(person_dir):
+        for candidate in sorted(glob.glob(os.path.join(faces_dir, "*", name))):
+            if os.path.isdir(candidate):
+                person_dir = candidate
+                break
+        else:
+            print(f"Error: missing directory {person_dir}")
+            sys.exit(1)
+    source_band = os.path.basename(os.path.dirname(person_dir))
+    vecs = collect_person_vectors(mtcnn, adaface, person_dir)
+    if not vecs:
+        print(f"Error: no usable faces for {band}/{name}")
+        sys.exit(1)
+    mean_vec = np.mean(vecs, axis=0)
+    bands = person_bands(name, source_band)
+    bands.append(band)
+    encoded_bands = encode_bands(sorted(dict.fromkeys(bands)))
+    print(f"  Registered one: {name} [{encoded_bands}] ({len(vecs)} photos)")
+    return name, encoded_bands, mean_vec
+
+
+def upsert_feature(output, name, band, vector):
+    if os.path.exists(output):
+        data = np.load(output, allow_pickle=True)
+        names = [str(n) for n in data["names"]]
+        features = data["features"]
+        if "bands" in data:
+            bands = [str(b) for b in data["bands"]]
+        else:
+            bands = [""] * len(names)
+    else:
+        names = []
+        bands = []
+        features = np.empty((0, vector.shape[0]), dtype=vector.dtype)
+
+    if name in names:
+        idx = names.index(name)
+        features[idx] = vector
+        bands[idx] = band
+        action = "Updated"
+    else:
+        names.append(name)
+        bands.append(band)
+        features = np.vstack([features, vector.reshape(1, -1)])
+        action = "Inserted"
+
+    np.savez(output, names=names, bands=bands, features=features)
+    print(f"{action}: {name} [{band}] -> {output}")
+    print(f"Saved {len(names)} feature vectors to {output}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Register faces and save features")
     parser.add_argument("-o", "--output", default=FEATURES_FILE)
+    parser.add_argument("--band", help="Only register one band/person pair")
+    parser.add_argument("--name", help="Only register one band/person pair")
     args = parser.parse_args()
 
     print("Loading MTCNN...")
@@ -93,6 +169,15 @@ def main():
 
     print("Loading AdaFace...")
     adaface = load_adaface()
+
+    if args.band or args.name:
+        if not args.band or not args.name:
+            print("Error: --band and --name must be used together")
+            sys.exit(1)
+        print(f"Registering one person from {FACES_DIR}/{args.band}/{args.name}...")
+        name, band, vector = register_one(mtcnn, adaface, FACES_DIR, args.band, args.name)
+        upsert_feature(args.output, name, band, vector)
+        return
 
     print(f"Registering faces from {FACES_DIR}...")
     names, bands, feature_db = register(mtcnn, adaface, FACES_DIR)

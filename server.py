@@ -21,9 +21,12 @@ UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads"
 FACES_UPLOAD_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "faces_upload"
 )
+FEEDBACK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedback")
+FEEDBACK_FILE = os.path.join(FEEDBACK_DIR, "feedback.jsonl")
 HISTORY_FILE = os.path.join(UPLOADS_DIR, "history.json")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(FACES_UPLOAD_DIR, exist_ok=True)
+os.makedirs(FEEDBACK_DIR, exist_ok=True)
 
 history_lock = threading.Lock()
 recognition_lock = threading.Lock()
@@ -31,9 +34,17 @@ recognition_slots = threading.BoundedSemaphore(1)
 MAX_IMAGE_DIM = 1280
 MAX_UPLOAD_BYTES = 6 * 1024 * 1024
 MAX_FACE_UPLOAD_BYTES = 80 * 1024 * 1024
+MAX_FACE_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024
+MAX_FEEDBACK_BYTES = 16 * 1024
 DEFAULT_MTCNN_THRESHOLDS = [0.4, 0.5, 0.7]
 LOW_MTCNN_THRESHOLDS = [0.2, 0.3, 0.5]
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+EXTRA_GROUP_MEMBERS = {
+    "sumimi": ["佐々木李子"],
+}
+EXTRA_PERSON_BANDS = {
+    "佐々木李子": ["sumimi"],
+}
 
 
 def load_history():
@@ -65,6 +76,20 @@ def safe_filename(filename):
     return f"{stem}{ext}"
 
 
+def directory_size(path):
+    total = 0
+    if not os.path.isdir(path):
+        return total
+    for root, _, files in os.walk(path):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            try:
+                total += os.path.getsize(file_path)
+            except OSError:
+                pass
+    return total
+
+
 def load_face_groups():
     base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "faces")
     groups = {}
@@ -91,7 +116,42 @@ def load_face_groups():
             groups[band] = roles
         else:
             counts.pop(band, None)
+
+    for band, people in EXTRA_GROUP_MEMBERS.items():
+        groups.setdefault(band, [])
+        counts.setdefault(band, {})
+        for name in people:
+            if name not in groups[band]:
+                groups[band].append(name)
+            if name not in counts[band]:
+                count = 0
+                for source_band, source_people in groups.items():
+                    if name not in source_people:
+                        continue
+                    source_dir = os.path.join(base_dir, source_band, name)
+                    if os.path.isdir(source_dir):
+                        count = sum(
+                            1
+                            for filename in os.listdir(source_dir)
+                            if os.path.splitext(filename)[1].lower()
+                            in ALLOWED_IMAGE_EXTENSIONS
+                        )
+                        break
+                counts[band][name] = count
+        groups[band] = sorted(groups[band])
     return groups, counts
+
+
+def parse_person_bands(value):
+    if isinstance(value, (list, tuple, set, np.ndarray)):
+        raw = value
+    else:
+        raw = str(value).split(",")
+    return {str(b).strip() for b in raw if str(b).strip()}
+
+
+def encode_bands(bands):
+    return ",".join(sorted(dict.fromkeys(b for b in bands if b)))
 
 
 def infer_name_bands(names):
@@ -99,8 +159,17 @@ def infer_name_bands(names):
     by_name = {}
     for band, people in groups.items():
         for name in people:
-            by_name[name] = band
-    return [by_name.get(name, "") for name in names]
+            by_name.setdefault(name, set()).add(band)
+    return [encode_bands(by_name.get(name, set())) for name in names]
+
+
+def normalize_feature_bands(names, bands):
+    normalized = []
+    for name, band_value in zip(names, bands):
+        band_set = parse_person_bands(band_value)
+        band_set.update(EXTRA_PERSON_BANDS.get(name, []))
+        normalized.append(encode_bands(band_set))
+    return normalized
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "AdaFace"))
@@ -176,11 +245,17 @@ def recognize(
         mtcnn.thresholds = original_thresholds
 
     results = []
-    band_mask = np.array([band in selected_bands for band in bands], dtype=bool)
+    person_band_sets = [parse_person_bands(band) for band in bands]
+    band_mask = np.array(
+        [bool(person_bands & selected_bands) for person_bands in person_band_sets],
+        dtype=bool,
+    )
     if not np.any(band_mask):
         band_mask = np.ones(len(names), dtype=bool)
     filtered_names = [name for name, keep in zip(names, band_mask) if keep]
-    filtered_bands = [band for band, keep in zip(bands, band_mask) if keep]
+    filtered_band_sets = [
+        person_bands for person_bands, keep in zip(person_band_sets, band_mask) if keep
+    ]
     filtered_features = feature_db[band_mask]
     filtered_norms = feature_norms[band_mask]
     img_w, img_h = pil_img.size
@@ -196,7 +271,8 @@ def recognize(
         top5 = [
             {
                 "name": filtered_names[idx],
-                "band": filtered_bands[idx],
+                "band": encode_bands(filtered_band_sets[idx]),
+                "bands": sorted(filtered_band_sets[idx]),
                 "similarity": round(float(cos_results[idx]), 4),
             }
             for idx in top_indices
@@ -213,7 +289,8 @@ def recognize(
         results.append(
             {
                 "name": filtered_names[max_idx],
-                "band": filtered_bands[max_idx],
+                "band": encode_bands(filtered_band_sets[max_idx]),
+                "bands": sorted(filtered_band_sets[max_idx]),
                 "similarity": round(float(cos_results[max_idx]), 4),
                 "top5": top5,
                 "bbox": bbox,
@@ -252,6 +329,9 @@ class FaceHandler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(content_length)
+        if len(body) > MAX_FACE_UPLOAD_BYTES:
+            self.send_json(413, {"error": "upload too large"})
+            return
         message = BytesParser(policy=email_policy).parsebytes(
             (
                 f"Content-Type: {content_type}\r\n"
@@ -279,6 +359,18 @@ class FaceHandler(BaseHTTPRequestHandler):
 
         band = safe_path_segment(band_value, "unknown_band")
         role = safe_path_segment(role_value, "unknown_role")
+        incoming_size = sum(len(payload) for _, payload in photos)
+        used_size = directory_size(FACES_UPLOAD_DIR)
+        if used_size + incoming_size > MAX_FACE_UPLOAD_TOTAL_BYTES:
+            self.send_json(
+                413,
+                {
+                    "error": "faces_upload storage limit exceeded",
+                    "limit_mb": MAX_FACE_UPLOAD_TOTAL_BYTES // (1024 * 1024),
+                    "used_mb": round(used_size / 1024 / 1024, 2),
+                },
+            )
+            return
 
         saved = []
         target_dir = os.path.join(FACES_UPLOAD_DIR, band, role)
@@ -286,6 +378,10 @@ class FaceHandler(BaseHTTPRequestHandler):
         for filename, payload in photos:
             if not payload:
                 continue
+            used_size += len(payload)
+            if used_size > MAX_FACE_UPLOAD_TOTAL_BYTES:
+                self.send_json(413, {"error": "faces_upload storage limit exceeded"})
+                return
             original_name = safe_filename(filename)
             _, ext = os.path.splitext(original_name)
             file_id = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
@@ -310,6 +406,42 @@ class FaceHandler(BaseHTTPRequestHandler):
             flush=True,
         )
         self.send_json(200, {"saved": saved, "band": band, "role": role})
+
+    def handle_feedback_upload(self, content_length):
+        if content_length <= 0:
+            self.send_json(400, {"error": "empty feedback"})
+            return
+        if content_length > MAX_FEEDBACK_BYTES:
+            self.send_json(413, {"error": "feedback too large"})
+            return
+
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except Exception:
+            self.send_json(400, {"error": "invalid json"})
+            return
+
+        message = str(data.get("message", "")).strip()
+        contact = str(data.get("contact", "")).strip()
+        if not message:
+            self.send_json(400, {"error": "feedback message required"})
+            return
+        if len(message) > 2000:
+            self.send_json(413, {"error": "feedback message too long"})
+            return
+
+        item = {
+            "message": message,
+            "contact": contact[:200],
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "ip": self.headers.get("CF-Connecting-IP") or self.client_address[0],
+            "user_agent": self.headers.get("User-Agent", ""),
+        }
+        with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        print("[server] feedback saved", flush=True)
+        self.send_json(200, {"ok": True})
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
@@ -360,6 +492,9 @@ class FaceHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         if parsed_path.path == "/upload_faces":
             self.handle_face_upload(content_length)
+            return
+        if parsed_path.path == "/feedback":
+            self.handle_feedback_upload(content_length)
             return
 
         params = urllib.parse.parse_qs(parsed_path.query)
@@ -454,7 +589,7 @@ def main():
     data = np.load(args.features, allow_pickle=True)
     names = [str(n) for n in data["names"]]
     if "bands" in data:
-        bands = [str(b) for b in data["bands"]]
+        bands = normalize_feature_bands(names, [str(b) for b in data["bands"]])
     else:
         bands = infer_name_bands(names)
     feature_db = data["features"]

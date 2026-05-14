@@ -81,6 +81,147 @@ brew install cloudflared
 
 终端会打印一个 `https://*.trycloudflare.com` 临时地址。
 
+## 服务器部署
+
+推荐用一台 Linux 云服务器长期运行 Python 服务，再用 Cloudflare Tunnel 绑定固定域名。这样不需要开放服务器公网端口，也不需要自己配置 HTTPS 证书。
+
+### 1. 准备服务器
+
+建议配置：
+
+- Ubuntu 22.04/24.04
+- 2 核 CPU / 4GB 内存起步
+- 磁盘按 `faces/`、`faces_upload/` 和模型大小预留，建议 20GB 以上
+
+安装基础依赖：
+
+```bash
+sudo apt update
+sudo apt install -y git python3.10 python3.10-venv python3-pip curl
+```
+
+拉取项目：
+
+```bash
+git clone https://github.com/satoshinji2992/SeiyuuMatch.git
+cd SeiyuuMatch
+```
+
+创建虚拟环境：
+
+```bash
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install opencv-python-headless numpy torch pytorch-lightning pillow requests
+```
+
+确认以下文件或目录已经放到服务器：
+
+```text
+AdaFace/pretrained/adaface_ir50_ms1mv2.ckpt
+features.npz
+faces/
+```
+
+### 2. 本地启动测试
+
+```bash
+source .venv/bin/activate
+python3 -u server.py --host 127.0.0.1 --port 3724
+```
+
+另开一个终端检查：
+
+```bash
+curl http://127.0.0.1:3724/health
+```
+
+### 3. 用 systemd 常驻服务
+
+创建服务文件：
+
+```bash
+sudo nano /etc/systemd/system/seiyuumatch.service
+```
+
+写入：
+
+```ini
+[Unit]
+Description=SeiyuuMatch recognition server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/SeiyuuMatch
+ExecStart=/home/ubuntu/SeiyuuMatch/.venv/bin/python3 -u server.py --host 127.0.0.1 --port 3724
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+```
+
+如果项目不在 `/home/ubuntu/SeiyuuMatch`，把 `WorkingDirectory` 和 `ExecStart` 改成实际路径。
+
+启动服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now seiyuumatch
+sudo systemctl status seiyuumatch
+```
+
+查看日志：
+
+```bash
+journalctl -u seiyuumatch -f
+```
+
+### 4. 绑定 Cloudflare 固定域名
+
+在 Cloudflare Zero Trust 创建 Tunnel，Public Hostname 建议这样填：
+
+```text
+Hostname: seiyuumatch.org 或 www.seiyuumatch.org
+Type: HTTP
+URL: http://127.0.0.1:3724
+```
+
+然后在服务器执行 Cloudflare 给出的安装命令，例如：
+
+```bash
+curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+sudo cloudflared service install <Cloudflare 给你的 token>
+```
+
+确认 Tunnel 服务运行：
+
+```bash
+sudo systemctl status cloudflared
+```
+
+### 5. 更新代码
+
+以后更新服务器代码：
+
+```bash
+cd /home/ubuntu/SeiyuuMatch
+git pull
+sudo systemctl restart seiyuumatch
+```
+
+如果修改了正式人脸库，需要重新生成特征文件：
+
+```bash
+source .venv/bin/activate
+python3 register.py
+sudo systemctl restart seiyuumatch
+```
+
 ## API
 
 ### GET `/`

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>你长得最像哪个声优？</title>
+    <title>测测你长得像哪个女声优</title>
     <style>
         * {
             margin: 0;
@@ -39,7 +39,7 @@
         }
 
         h1 {
-            margin-top: 40px;
+            margin-top: 60px;
             font-size: 28px;
             font-weight: 600;
             background: linear-gradient(135deg, #ff6b9d, #c44dff);
@@ -193,8 +193,9 @@
             padding: 24px;
             margin-bottom: 16px;
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
-            gap: 20px;
+            gap: 12px 16px;
             border: 1px solid #2a2a40;
             animation: fadeIn 0.4s ease;
         }
@@ -247,6 +248,7 @@
 
         .result-card .info {
             flex: 1;
+            min-width: 120px;
         }
 
         .result-card .label {
@@ -300,9 +302,13 @@
             box-shadow: 0 14px 50px rgba(0, 0, 0, 0.5);
         }
 
-        .top5-help:hover + .top5-popover,
-        .top5-help:focus + .top5-popover,
+        .top5-help:hover+.top5-popover,
+        .top5-help:focus+.top5-popover,
         .top5-popover:hover {
+            display: block;
+        }
+
+        .top5-popover.show {
             display: block;
         }
 
@@ -370,7 +376,7 @@
 
         #retry {
             display: none;
-            margin: 24px 0 40px;
+            margin: 24px 0 90px;
             padding: 12px 32px;
             border: none;
             border-radius: 25px;
@@ -480,6 +486,7 @@
             border-color: #c44dff;
         }
 
+        #feedbackFab,
         #collectorFab {
             position: fixed;
             right: 22px;
@@ -497,11 +504,17 @@
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
         }
 
-        #collectorFab:hover {
+        #collectorFab:hover,
+        #feedbackFab:hover {
             border-color: #c44dff;
         }
 
-        #collectorModal {
+        #feedbackFab {
+            right: 132px;
+        }
+
+        #collectorModal,
+        #feedbackModal {
             position: fixed;
             inset: 0;
             z-index: 18;
@@ -512,11 +525,13 @@
             background: rgba(15, 15, 26, 0.42);
         }
 
-        #collectorModal.show {
+        #collectorModal.show,
+        #feedbackModal.show {
             display: flex;
         }
 
-        .collector-panel {
+        .collector-panel,
+        .feedback-panel {
             width: min(92vw, 420px);
             background: #1a1a2e;
             border: 1px solid #34344f;
@@ -525,18 +540,21 @@
             box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5);
         }
 
-        .collector-header {
+        .collector-header,
+        .feedback-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
             margin-bottom: 16px;
         }
 
-        .collector-header h2 {
+        .collector-header h2,
+        .feedback-header h2 {
             font-size: 20px;
         }
 
-        #closeCollector {
+        #closeCollector,
+        #closeFeedback {
             width: 34px;
             height: 34px;
             border: none;
@@ -547,7 +565,8 @@
             cursor: pointer;
         }
 
-        .collector-panel label {
+        .collector-panel label,
+        .feedback-panel label {
             display: block;
             margin: 12px 0 6px;
             color: #b8b8cc;
@@ -555,7 +574,9 @@
         }
 
         .collector-panel select,
-        .collector-panel input[type="file"] {
+        .collector-panel input[type="file"],
+        .feedback-panel input,
+        .feedback-panel textarea {
             width: 100%;
             min-height: 42px;
             border: 1px solid #34344f;
@@ -564,6 +585,11 @@
             color: #fff;
             padding: 10px;
             font-size: 14px;
+        }
+
+        .feedback-panel textarea {
+            min-height: 130px;
+            resize: vertical;
         }
 
         .collector-note {
@@ -673,7 +699,8 @@
             font-size: 11px;
         }
 
-        #submitCollector {
+        #submitCollector,
+        #submitFeedback {
             width: 100%;
             min-height: 44px;
             margin-top: 16px;
@@ -686,7 +713,8 @@
             cursor: pointer;
         }
 
-        #collectorStatus {
+        #collectorStatus,
+        #feedbackStatus {
             min-height: 20px;
             margin-top: 12px;
             color: #d6d6e6;
@@ -696,26 +724,29 @@
 </head>
 
 <body class="privacy-locked">
-<div id="scaleControl">
-    <span>缩放</span>
-    <select id="scaleSelect" aria-label="页面缩放">
-        <option value="0.5">50%</option>
-        <option value="0.75">75%</option>
-        <option value="0.9">90%</option>
-        <option value="1">100%</option>
-        <option value="1.2">120%</option>
-    </select>
-    <a id="githubLink" href="https://github.com/satoshinji2992/SeiyuuMatch" target="_blank" rel="noopener noreferrer">GitHub</a>
-</div>
-<div id="privacyNotice" class="show" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
+    <div id="scaleControl">
+        <span>缩放</span>
+        <select id="scaleSelect" aria-label="页面缩放">
+            <option value="0.5">50%</option>
+            <option value="0.75">75%</option>
+            <option value="0.9">90%</option>
+            <option value="1">100%</option>
+            <option value="1.2">120%</option>
+        </select>
+        <a id="githubLink" href="https://github.com/satoshinji2992/SeiyuuMatch" target="_blank"
+            rel="noopener noreferrer">GitHub</a>
+    </div>
+    <div id="privacyNotice" class="show" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
         <div class="privacy-panel">
-            <h2 id="privacyTitle">使用前请确认隐私提示</h2>
+            <h2 id="privacyTitle">隐私提示</h2>
             <p><strong>本页面需要把你选择的图片上传到服务器</strong>进行人脸检测和相似度识别。</p>
+            <p style="color:#ff6b9d;font-weight:700;margin:8px 0">⚠️ 管理员可以在服务器看到你上传的图片，请谨慎上传自己的照片！</p>
             <ul>
                 <li>上传图片会经过 Cloudflare Tunnel 发送到本站服务器。</li>
                 <li>服务器会保存一份压缩后的上传记录和识别结果，用于历史记录与排查问题。</li>
                 <li>如果你愿意，也可以通过右下角“上传数据集”为照片数据集贡献公开、清晰的候选样本。</li>
                 <li>请不要上传他人照片、敏感照片，或你没有权利处理的图片。</li>
+                <li>欢迎从右上角进入本项目的github页面点star!</li>
             </ul>
             <p>点击下方按钮表示你已了解并同意上述处理方式。</p>
             <button id="agreePrivacy" type="button">同意使用</button>
@@ -727,7 +758,8 @@
     <section id="bandFilter" class="band-filter">
         <div class="band-filter-title">
             <h2>识别范围</h2>
-            <p>mygo 和 avemujica 数据最多，稳定性最高</p>
+            <button id="bandSelectAll" type="button"
+                style="background:none;border:1px solid #5a5a7a;color:#d6d6e6;padding:2px 10px;border-radius:10px;font-size:12px;cursor:pointer">全选</button>
         </div>
         <div id="bandFilterOptions"></div>
     </section>
@@ -744,7 +776,29 @@
     <div id="results"></div>
     <button id="relaxedRetry" onclick="retryRelaxed()">识别不到? 降低阈值再试一次!</button>
     <button id="retry" onclick="resetAll()">再来一张</button>
+    <button id="feedbackFab" type="button">反馈意见</button>
     <button id="collectorFab" type="button">上传数据集</button>
+    <div id="feedbackModal" aria-hidden="true">
+        <div class="feedback-panel">
+            <div class="feedback-header">
+                <h2>反馈意见</h2>
+                <button id="closeFeedback" type="button" aria-label="关闭">×</button>
+            </div>
+            <form id="feedbackForm">
+                <p class="collector-note">欢迎反馈识别问题、页面建议、数据集问题或你想补充的功能。</p>
+
+                <label for="feedbackMessage">意见内容</label>
+                <textarea id="feedbackMessage" name="message" maxlength="2000" required
+                    placeholder="请写下你的反馈..."></textarea>
+
+                <label for="feedbackContact">联系方式，可选</label>
+                <input id="feedbackContact" name="contact" maxlength="200" placeholder="QQ / 邮箱 / 昵称">
+
+                <button id="submitFeedback" type="submit">提交反馈</button>
+                <div id="feedbackStatus"></div>
+            </form>
+        </div>
+    </div>
     <div id="collectorModal" aria-hidden="true">
         <div class="collector-panel">
             <div class="collector-header">
@@ -788,7 +842,13 @@
         const privacyNotice = document.getElementById('privacyNotice');
         const agreePrivacy = document.getElementById('agreePrivacy');
         const privacyHelp = document.getElementById('privacyHelp');
-        const privacyAcceptedKey = 'seiyuumatchPrivacyAccepted';
+        const feedbackFab = document.getElementById('feedbackFab');
+        const feedbackModal = document.getElementById('feedbackModal');
+        const closeFeedback = document.getElementById('closeFeedback');
+        const feedbackForm = document.getElementById('feedbackForm');
+        const feedbackMessage = document.getElementById('feedbackMessage');
+        const feedbackContact = document.getElementById('feedbackContact');
+        const feedbackStatus = document.getElementById('feedbackStatus');
         const collectorFab = document.getElementById('collectorFab');
         const collectorModal = document.getElementById('collectorModal');
         const closeCollector = document.getElementById('closeCollector');
@@ -797,46 +857,38 @@
         const roleSelect = document.getElementById('roleSelect');
         const collectorPhotos = document.getElementById('collectorPhotos');
         const collectorStatus = document.getElementById('collectorStatus');
-const datasetCount = document.getElementById('datasetCount');
-const countTablePopover = document.getElementById('countTablePopover');
-const bandFilterOptions = document.getElementById('bandFilterOptions');
-const scaleSelect = document.getElementById('scaleSelect');
-let lastUploadBuffer = null;
-let bandRoles = {};
-let datasetCounts = {};
-const defaultRecognitionBands = ['mygo', 'avemujica'];
-const pageScaleKey = 'seiyuumatchPageScale';
-
-        function hasPrivacyConsent() {
-            return localStorage.getItem(privacyAcceptedKey) === 'yes';
-        }
+        const datasetCount = document.getElementById('datasetCount');
+        const countTablePopover = document.getElementById('countTablePopover');
+        const bandFilterOptions = document.getElementById('bandFilterOptions');
+        const bandSelectAll = document.getElementById('bandSelectAll');
+        const scaleSelect = document.getElementById('scaleSelect');
+        let lastUploadBuffer = null;
+        let bandRoles = {};
+        let datasetCounts = {};
+        const defaultRecognitionBands = ['mygo', 'avemujica', 'sumimi'];
+        const pageScaleKey = 'seiyuumatchPageScale';
 
         function unlockPrivacyNotice() {
             document.body.classList.remove('privacy-locked');
             privacyNotice.classList.remove('show');
         }
 
-        if (hasPrivacyConsent()) {
+        agreePrivacy.addEventListener('click', () => {
             unlockPrivacyNotice();
+        });
+
+        privacyHelp.addEventListener('click', () => {
+            privacyNotice.classList.add('show');
+        });
+
+        function setPageScale(scale) {
+            document.documentElement.style.setProperty('--page-scale', scale);
+            scaleSelect.value = scale;
+            localStorage.setItem(pageScaleKey, scale);
         }
 
-agreePrivacy.addEventListener('click', () => {
-  localStorage.setItem(privacyAcceptedKey, 'yes');
-  unlockPrivacyNotice();
-});
-
-privacyHelp.addEventListener('click', () => {
-  privacyNotice.classList.add('show');
-});
-
-function setPageScale(scale) {
-  document.documentElement.style.setProperty('--page-scale', scale);
-  scaleSelect.value = scale;
-  localStorage.setItem(pageScaleKey, scale);
-}
-
-setPageScale(localStorage.getItem(pageScaleKey) || '1');
-scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
+        setPageScale(localStorage.getItem(pageScaleKey) || '1');
+        scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
 
         function populateBands() {
             const bands = Object.keys(bandRoles);
@@ -923,11 +975,6 @@ scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
         }
 
         function openCollector() {
-            if (!hasPrivacyConsent()) {
-                privacyNotice.classList.add('show');
-                document.body.classList.add('privacy-locked');
-                return;
-            }
             collectorModal.classList.add('show');
             collectorModal.setAttribute('aria-hidden', 'false');
         }
@@ -938,9 +985,32 @@ scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
             collectorStatus.textContent = '';
         }
 
+        function openFeedback() {
+            feedbackModal.classList.add('show');
+            feedbackModal.setAttribute('aria-hidden', 'false');
+            feedbackStatus.textContent = '';
+        }
+
+        function closeFeedbackModal() {
+            feedbackModal.classList.remove('show');
+            feedbackModal.setAttribute('aria-hidden', 'true');
+            feedbackStatus.textContent = '';
+        }
+
         loadFaceGroups();
+        bandSelectAll.addEventListener('click', () => {
+            const boxes = bandFilterOptions.querySelectorAll('input[name="recognitionBand"]');
+            const allChecked = [...boxes].every(b => b.checked);
+            boxes.forEach(b => b.checked = !allChecked);
+            bandSelectAll.textContent = allChecked ? '全选' : '取消全选';
+        });
         bandSelect.addEventListener('change', populateRoles);
         roleSelect.addEventListener('change', updateDatasetCount);
+        feedbackFab.addEventListener('click', openFeedback);
+        closeFeedback.addEventListener('click', closeFeedbackModal);
+        feedbackModal.addEventListener('click', e => {
+            if (e.target === feedbackModal) closeFeedbackModal();
+        });
         collectorFab.addEventListener('click', openCollector);
         closeCollector.addEventListener('click', closeCollectorModal);
         collectorModal.addEventListener('click', e => {
@@ -975,6 +1045,35 @@ scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
                 });
         });
 
+        feedbackForm.addEventListener('submit', e => {
+            e.preventDefault();
+            const message = feedbackMessage.value.trim();
+            const contact = feedbackContact.value.trim();
+            if (!message) {
+                feedbackStatus.textContent = '请先填写反馈内容。';
+                return;
+            }
+            feedbackStatus.textContent = '正在提交...';
+            fetch('/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message, contact }),
+            })
+                .then(async r => {
+                    const data = await r.json();
+                    if (!r.ok) throw new Error(data.error || 'feedback failed');
+                    return data;
+                })
+                .then(() => {
+                    feedbackStatus.textContent = '感谢反馈，已收到。';
+                    feedbackMessage.value = '';
+                    feedbackContact.value = '';
+                })
+                .catch(() => {
+                    feedbackStatus.textContent = '提交失败，请稍后重试。';
+                });
+        });
+
         dropzone.addEventListener('dragover', e => {
             e.preventDefault();
             dropzone.classList.add('dragover');
@@ -990,11 +1089,6 @@ scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
         });
 
         function handleFile(file) {
-            if (!hasPrivacyConsent()) {
-                privacyNotice.classList.add('show');
-                document.body.classList.add('privacy-locked');
-                return;
-            }
             if (!file.type.startsWith('image/')) return;
             previewImg.src = URL.createObjectURL(file);
             preview.style.display = 'block';
@@ -1152,6 +1246,14 @@ scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
     `;
                 results.appendChild(card);
             });
+            results.querySelectorAll('.top5-help').forEach(btn => {
+                btn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const popover = btn.nextElementSibling;
+                    document.querySelectorAll('.top5-popover.show').forEach(p => { if (p !== popover) p.classList.remove('show'); });
+                    popover.classList.toggle('show');
+                });
+            });
         }
 
         function resetAll() {
@@ -1164,6 +1266,10 @@ scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
             lastUploadBuffer = null;
             fileInput.value = '';
         }
+
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.top5-popover.show').forEach(p => p.classList.remove('show'));
+        });
     </script>
 </body>
 
