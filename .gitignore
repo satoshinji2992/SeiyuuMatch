@@ -39,3 +39,9 @@ Thumbs.db
 
 # Local-only tools
 crawl_faces.py
+bench_env.py
+run.py
+run_camera.py
+start_register.zsh
+start_server.zsh
+start_tunnel.zsh
