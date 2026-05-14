@@ -93,9 +93,9 @@
             align-items: center;
             gap: 6px;
             justify-content: center;
-            width: 82px;
-            height: 38px;
-            padding: 4px 10px;
+            min-width: 112px;
+            height: 42px;
+            padding: 5px 10px;
             border: 1px solid #34344f;
             border-radius: 12px;
             background: #101020;
@@ -122,10 +122,18 @@
         }
 
         .band-logo {
-            max-width: 64px;
-            max-height: 26px;
+            max-width: 52px;
+            max-height: 24px;
             object-fit: contain;
             display: block;
+        }
+
+        .band-option-name {
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1;
+            color: #d6d6e6;
+            white-space: nowrap;
         }
 
         .band-logo-fallback {
@@ -711,6 +719,23 @@
             color: #fff;
         }
 
+        .count-band-logo {
+            max-width: 52px;
+            max-height: 20px;
+            object-fit: contain;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .count-band-fallback {
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .count-cell-name {
             display: block;
             color: #fff;
@@ -907,7 +932,8 @@
             'pastel',
             'ppp',
             'ras',
-            'roselia'
+            'roselia',
+            'sumimi'
         ]);
 
         function unlockPrivacyNotice() {
@@ -963,7 +989,7 @@
             countTablePopover.innerHTML = `
     <table>
       <caption>全部数据集照片数量</caption>
-      <thead><tr>${bands.map(band => `<th>${band}</th>`).join('')}</tr></thead>
+      <thead><tr>${bands.map(band => `<th title="${band}">${renderBandIcon(band, 'count')}</th>`).join('')}</tr></thead>
       <tbody>
         ${Array.from({ length: maxRows }, (_, rowIndex) => `
           <tr>
@@ -995,18 +1021,26 @@
                 });
         }
 
+        function renderBandIcon(band, variant = 'filter') {
+            const encoded = encodeURIComponent(band);
+            if (!bandIconNames.has(band)) {
+                const className = variant === 'count' ? 'count-band-fallback' : 'band-logo-fallback';
+                return `<span class="${className}" title="${band}">${band}</span>`;
+            }
+            const className = variant === 'count' ? 'count-band-logo' : 'band-logo';
+            return `<img class="${className}" src="/icon/${encoded}" alt="${band}" title="${band}">`;
+        }
+
         function populateRecognitionBands() {
             const bands = Object.keys(bandRoles);
             bandFilterOptions.innerHTML = bands.map(band => {
                 const checked = defaultRecognitionBands.includes(band) ? 'checked' : '';
                 const recommended = defaultRecognitionBands.includes(band) ? ' recommended' : '';
-                const visual = bandIconNames.has(band)
-                    ? `<img class="band-logo" src="/icon/${encodeURIComponent(band)}" alt="${band}" title="${band}">`
-                    : `<span class="band-logo-fallback" title="${band}">${band}</span>`;
                 return `
       <label class="band-option${recommended}" title="${band}">
         <input type="checkbox" name="recognitionBand" value="${band}" ${checked}>
-        ${visual}
+        ${renderBandIcon(band)}
+        <span class="band-option-name">${band}</span>
       </label>
     `;
             }).join('');
