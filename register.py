@@ -1,7 +1,7 @@
 import os
 import sys
-import glob
 import argparse
+import gc
 import numpy as np
 from PIL import Image
 import torch
@@ -16,6 +16,7 @@ MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "AdaFace/pretrained/adaface_ir50_ms1mv2.ckpt",
 )
+MAX_REGISTER_IMAGE_DIM = int(os.environ.get("MAX_REGISTER_IMAGE_DIM", "1280"))
 EXTRA_PERSON_BANDS = {
     "佐々木李子": ["sumimi"],
 }
@@ -46,49 +47,71 @@ def load_adaface():
 def load_mtcnn():
     m = MTCNN(device="cpu", crop_size=(112, 112))
     m.min_face_size = 12
-    m.thresholds = [0.6, 0.7, 0.7]
+    m.thresholds = [0.5, 0.7, 0.7]
     return m
+
+
+def resize_for_registration(img):
+    longest = max(img.size)
+    if longest <= MAX_REGISTER_IMAGE_DIM:
+        return img
+
+    scale = MAX_REGISTER_IMAGE_DIM / longest
+    size = (
+        max(1, int(round(img.width * scale))),
+        max(1, int(round(img.height * scale))),
+    )
+    return img.resize(size, Image.Resampling.LANCZOS)
 
 
 def adaface_infer(model, face_aligned):
     bgr = ((face_aligned[:, :, ::-1] / 255.0) - 0.5) / 0.5
     tensor = torch.tensor(np.array([bgr.transpose(2, 0, 1)])).float()
-    with torch.no_grad():
+    with torch.inference_mode():
         feature, _ = model(tensor)
     return feature[0].numpy()
 
 
 def collect_person_vectors(mtcnn, adaface, person_dir):
     vecs = []
-    for pp in sorted(glob.glob(os.path.join(person_dir, "*"))):
-        if not pp.lower().endswith((".jpg", ".jpeg", ".png")):
+    for entry in sorted(os.scandir(person_dir), key=lambda e: e.name):
+        if not entry.is_file():
             continue
-        img = Image.open(pp).convert("RGB")
-        _, faces = mtcnn.align_multi(img)
-        if len(faces) == 0:
-            print(f"  Warning: no face in {pp}, skipping")
+        pp = entry.path
+        if not pp.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
             continue
-        if len(faces) > 1:
-            print(f"  Warning: {len(faces)} faces in {pp}, skipping")
-            continue
-        vecs.append(adaface_infer(adaface, np.array(faces[0])))
+        try:
+            with Image.open(pp) as source:
+                img = resize_for_registration(source.convert("RGB"))
+            _, faces = mtcnn.align_multi(img)
+            if len(faces) == 0:
+                print(f"  Warning: no face in {pp}, skipping")
+                continue
+            if len(faces) > 1:
+                print(f"  Warning: {len(faces)} faces in {pp}, skipping")
+                continue
+            vecs.append(adaface_infer(adaface, np.array(faces[0])))
+        except Exception as exc:
+            print(f"  Warning: failed to process {pp}: {exc}, skipping")
+        finally:
+            gc.collect()
     return vecs
 
 
 def register(mtcnn, adaface, faces_dir):
     name_vecs = {}
     name_bands = {}
-    for band_dir in sorted(glob.glob(os.path.join(faces_dir, "*"))):
-        if not os.path.isdir(band_dir):
+    for band_entry in sorted(os.scandir(faces_dir), key=lambda e: e.name):
+        if not band_entry.is_dir():
             continue
-        band = os.path.basename(band_dir)
-        for person_dir in sorted(glob.glob(os.path.join(band_dir, "*"))):
-            if not os.path.isdir(person_dir):
+        band = band_entry.name
+        for person_entry in sorted(os.scandir(band_entry.path), key=lambda e: e.name):
+            if not person_entry.is_dir():
                 continue
-            name = os.path.basename(person_dir)
+            name = person_entry.name
             name_bands[name] = person_bands(name, band)
             name_vecs.setdefault(name, []).extend(
-                collect_person_vectors(mtcnn, adaface, person_dir)
+                collect_person_vectors(mtcnn, adaface, person_entry.path)
             )
 
     names = []
@@ -96,6 +119,9 @@ def register(mtcnn, adaface, faces_dir):
     feature_vectors = []
     for name in sorted(name_vecs):
         vecs = name_vecs[name]
+        if not vecs:
+            print(f"  Warning: no usable faces for {name}, skipping")
+            continue
         mean_vec = np.mean(vecs, axis=0)
         names.append(name)
         bands.append(encode_bands(name_bands.get(name, [])))
@@ -107,7 +133,10 @@ def register(mtcnn, adaface, faces_dir):
 def register_one(mtcnn, adaface, faces_dir, band, name):
     person_dir = os.path.join(faces_dir, band, name)
     if not os.path.isdir(person_dir):
-        for candidate in sorted(glob.glob(os.path.join(faces_dir, "*", name))):
+        for band_entry in sorted(os.scandir(faces_dir), key=lambda e: e.name):
+            if not band_entry.is_dir():
+                continue
+            candidate = os.path.join(band_entry.path, name)
             if os.path.isdir(candidate):
                 person_dir = candidate
                 break
@@ -134,10 +163,10 @@ def register_band(mtcnn, adaface, faces_dir, band):
         sys.exit(1)
 
     registered = []
-    for person_dir in sorted(glob.glob(os.path.join(band_dir, "*"))):
-        if not os.path.isdir(person_dir):
+    for person_entry in sorted(os.scandir(band_dir), key=lambda e: e.name):
+        if not person_entry.is_dir():
             continue
-        name = os.path.basename(person_dir)
+        name = person_entry.name
         name, encoded_bands, vector = register_one(mtcnn, adaface, faces_dir, band, name)
         registered.append((name, encoded_bands, vector))
 

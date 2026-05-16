@@ -1,12 +1,12 @@
 # SeiyuuMatch
 
-当前版本：`1.1.0`
+当前版本：`1.2.0`
 
 > 拍张照，测测你长得最像邦多利哪位女声优 🎸
 
-[![Version](https://img.shields.io/badge/version-1.1.0-ff6b9d)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-ff6b9d)](./CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-online-c44dff)](#)
-[![Dataset](https://img.shields.io/badge/dataset-48%20seiyuu-6c5ce7)](#)
+[![Dataset](https://img.shields.io/badge/dataset-expandable-6c5ce7)](#)
 [![Privacy](https://img.shields.io/badge/privacy-upload%20notice-2d3436)](#隐私说明)
 
 ## 运行界面
@@ -27,12 +27,13 @@
 | 声优头像展示   | 结果卡片直接显示匹配声优的头像                   |
 | 数据集贡献     | 可以上传公开清晰的声优照片，帮我们补全数据       |
 | 反馈意见       | 页面内直接提交，方便后续改进                     |
+| 特殊结果卡     | 支持隐藏候选触发专属展示，不进入普通候选排行     |
 
 ## 数据概览
 
 | 项目         | 状态                             |
 | ------------ | -------------------------------- |
-| 声优条目     | 48 人                            |
+| 声优条目     | 随 `features.npz` 和正式数据集更新 |
 | 默认检测范围 | MyGO!!!!! / Ave Mujica / sumimi  |
 | 支持团体     | 已包含新旧共 13 个团体入口        |
 | 头像展示     | 独立存放在 `avatar/`             |

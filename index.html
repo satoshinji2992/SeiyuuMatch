@@ -69,6 +69,11 @@
             max-width: 680px;
         }
 
+        .subtitle-note .privacy-emphasis {
+            color: #ff6b9d;
+            font-weight: 700;
+        }
+
         .band-filter {
             width: 90%;
             max-width: 720px;
@@ -179,6 +184,13 @@
         #dropzone p span {
             color: #c44dff;
             text-decoration: underline;
+        }
+
+        #dropzone .dropzone-note {
+            margin-top: 10px;
+            color: #777;
+            font-size: 13px;
+            line-height: 1.5;
         }
 
         #preview {
@@ -307,6 +319,37 @@
             margin-top: 6px;
             color: #999;
             font-size: 13px;
+        }
+
+        .result-card .easter-egg-message {
+            margin-top: 8px;
+            color: #ff3b3b;
+            font-size: 15px;
+            font-weight: 800;
+        }
+
+        .big-brother-card {
+            position: relative;
+            justify-content: center;
+            min-height: 120px;
+            overflow: visible;
+            border-color: rgba(255, 0, 0, 0.7);
+            box-shadow: 0 0 28px rgba(255, 0, 0, 0.32);
+        }
+
+        .big-brother-message {
+            position: relative;
+            z-index: 1;
+            width: 120%;
+            margin: -8px -10%;
+            color: #ff1f1f;
+            font-size: 42px;
+            font-weight: 900;
+            line-height: 1.05;
+            text-align: center;
+            text-shadow:
+                0 0 10px rgba(255, 0, 0, 0.65),
+                0 0 26px rgba(255, 0, 0, 0.45);
         }
 
         .top5-wrap {
@@ -810,7 +853,7 @@
     <button id="privacyHelp" type="button" aria-label="查看隐私提示">?</button>
     <h1>你长得最像哪个邦多利女声优？</h1>
     <p class="subtitle">上传一张照片，看看最像谁！</p>
-    <p class="subtitle-note">推荐使用公众人物或女声优照片体验，谨慎上传隐私图片</p>
+    <p class="subtitle-note">推荐使用公众人物或女声优照片体验，<span class="privacy-emphasis">谨慎上传隐私图片</span></p>
     <section id="bandFilter" class="band-filter">
         <div class="band-filter-title">
             <h2>识别范围</h2>
@@ -822,6 +865,7 @@
     <div id="dropzone" onclick="document.getElementById('fileInput').click()">
         <div class="icon">📷</div>
         <p>拖拽图片到这里，或者 <span>点击上传</span></p>
+        <p class="dropzone-note">*闭眼,眼镜等脸部遮挡物和画面清晰度可能影响识别结果</p>
         <input type="file" id="fileInput" accept="image/*" style="display:none">
     </div>
     <div id="preview"><img id="previewImg"></div>
@@ -923,6 +967,21 @@
         let datasetCounts = {};
         const defaultRecognitionBands = ['mygo', 'avemujica', 'sumimi'];
         const pageScaleKey = 'seiyuumatchPageScale';
+        const bandOrder = [
+            'ppp',
+            'roselia',
+            'afterglow',
+            'pastel',
+            'hhw',
+            'ras',
+            'morfonica',
+            'mygo',
+            'sumimi',
+            'avemujica',
+            'mewtype',
+            'millsage',
+            'dumbrock'
+        ];
         const bandIconNames = new Set([
             'afterglow',
             'avemujica',
@@ -938,6 +997,12 @@
             'roselia',
             'sumimi'
         ]);
+
+        function orderedBands() {
+            const known = bandOrder.filter(band => Object.prototype.hasOwnProperty.call(bandRoles, band));
+            const extra = Object.keys(bandRoles).filter(band => !bandOrder.includes(band)).sort();
+            return [...known, ...extra];
+        }
 
         function unlockPrivacyNotice() {
             document.body.classList.remove('privacy-locked');
@@ -962,7 +1027,7 @@
         scaleSelect.addEventListener('change', () => setPageScale(scaleSelect.value));
 
         function populateBands() {
-            const bands = Object.keys(bandRoles);
+            const bands = orderedBands();
             bandSelect.innerHTML = bands
                 .map(band => `<option value="${band}">${band}</option>`)
                 .join('');
@@ -987,7 +1052,7 @@
         }
 
         function updateCountTable() {
-            const bands = Object.keys(bandRoles);
+            const bands = orderedBands();
             const maxRows = Math.max(0, ...bands.map(band => (bandRoles[band] || []).length));
             countTablePopover.innerHTML = `
     <table>
@@ -1042,7 +1107,7 @@
         }
 
         function populateRecognitionBands() {
-            const bands = Object.keys(bandRoles);
+            const bands = orderedBands();
             bandFilterOptions.innerHTML = bands.map(band => {
                 const checked = defaultRecognitionBands.includes(band) ? 'checked' : '';
                 const recommended = defaultRecognitionBands.includes(band) ? ' recommended' : '';
@@ -1354,8 +1419,27 @@
             }
             faces.forEach((name, i) => {
                 const detail = details[i] || {};
+                if (detail.easter_egg === 'big_brother') {
+                    const card = document.createElement('div');
+                    card.className = 'result-card big-brother-card';
+                    card.innerHTML = `<div class="big-brother-message">${detail.easter_egg_message}</div>`;
+                    results.appendChild(card);
+                    return;
+                }
                 const userFaceSrc = cropFaceFromPreview(detail.bbox) || previewImg.src;
-                const seiyuFaceSrc = `/avatar/${encodeURIComponent(name)}`;
+                const avatarName = detail.avatar_name || name;
+                const seiyuFaceSrc = `/avatar/${encodeURIComponent(avatarName)}`;
+                const easterEggMessage = detail.easter_egg_message
+                    ? `<div class="easter-egg-message">${detail.easter_egg_message}</div>`
+                    : '';
+                const top5Block = detail.easter_egg
+                    ? ''
+                    : `
+      <div class="top5-wrap">
+        <button class="top5-help" type="button" aria-label="查看 Top 5 匹配度">?</button>
+        <div class="top5-popover">${renderTop5(detail.top5)}</div>
+      </div>
+    `;
                 const card = document.createElement('div');
                 card.className = 'result-card';
                 card.innerHTML = `
@@ -1373,11 +1457,9 @@
         <div class="label">${faces.length > 1 ? '第 ' + (i + 1) + ' 张脸' : ''} 最像</div>
         <div class="name">${name}</div>
         <div class="score">匹配度 ${formatDisplayScore(detail)}</div>
+        ${easterEggMessage}
       </div>
-      <div class="top5-wrap">
-        <button class="top5-help" type="button" aria-label="查看 Top 5 匹配度">?</button>
-        <div class="top5-popover">${renderTop5(detail.top5)}</div>
-      </div>
+      ${top5Block}
     `;
                 results.appendChild(card);
             });

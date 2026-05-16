@@ -23,6 +23,7 @@ faces_upload/
 feedback/
 jobs/
 results/
+exports/
 faces/
 tests/
 
@@ -41,6 +42,7 @@ Thumbs.db
 # Local-only tools
 crawl_faces.py
 bench_env.py
+export_similar_uploads.py
 run.py
 run_camera.py
 start_register.zsh

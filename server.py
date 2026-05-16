@@ -52,11 +52,19 @@ MAX_UPLOAD_BYTES = 6 * 1024 * 1024
 MAX_FACE_UPLOAD_BYTES = 80 * 1024 * 1024
 MAX_FACE_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FEEDBACK_BYTES = 16 * 1024
-DEFAULT_MTCNN_THRESHOLDS = [0.6, 0.7, 0.7]
+DEFAULT_MTCNN_THRESHOLDS = [0.5, 0.7, 0.7]
 LOW_MTCNN_THRESHOLDS = [0.2, 0.3, 0.5]
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 STATIC_CACHE_SECONDS = 7 * 24 * 60 * 60
 job_queue = queue.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
+EASTER_EGG_BAND = "???"
+EASTER_EGG_NAME = "liyuu"
+EASTER_EGG_DISPLAY_NAME = "Liyuu"
+EASTER_EGG_TRIGGER_SCORE = 65
+EASTER_EGG_MESSAGE = "你引起了李嘉的注意"
+BIG_BROTHER_NAME = "立希"
+BIG_BROTHER_TRIGGER_SCORE = 65
+BIG_BROTHER_MESSAGE = "老大哥正在看着你"
 EXTRA_GROUP_MEMBERS = {
     "sumimi": ["佐々木李子"],
     "millsage": ["薬師寺李有", "千春", "結川あさき", "伊駒ゆりえ", "咲川ひなの"],
@@ -242,7 +250,11 @@ def load_face_groups():
         return groups, counts
     for band in sorted(os.listdir(base_dir)):
         band_path = os.path.join(base_dir, band)
-        if not os.path.isdir(band_path) or band.startswith("."):
+        if (
+            not os.path.isdir(band_path)
+            or band.startswith(".")
+            or band == EASTER_EGG_BAND
+        ):
             continue
         roles = []
         counts[band] = {}
@@ -399,6 +411,14 @@ def recognize(
         [bool(person_bands & selected_bands) for person_bands in person_band_sets],
         dtype=bool,
     )
+    easter_egg_indices = [
+        idx
+        for idx, name in enumerate(names)
+        if EASTER_EGG_BAND in person_band_sets[idx]
+        and (name.lower() == EASTER_EGG_NAME.lower() or name == BIG_BROTHER_NAME)
+    ]
+    for idx in easter_egg_indices:
+        band_mask[idx] = True
     if not np.any(band_mask):
         return []
     filtered_names = [name for name, keep in zip(names, band_mask) if keep]
@@ -415,8 +435,62 @@ def recognize(
         if vec_norm == 0:
             continue
         cos_results = filtered_features @ vec / (filtered_norms * vec_norm)
-        max_idx = int(np.argmax(cos_results))
-        top_indices = np.argsort(cos_results)[::-1][:5]
+        easter_egg_filtered_idx = next(
+            (
+                idx
+                for idx, name in enumerate(filtered_names)
+                if name.lower() == EASTER_EGG_NAME.lower()
+                and EASTER_EGG_BAND in filtered_band_sets[idx]
+            ),
+            None,
+        )
+        big_brother_filtered_idx = next(
+            (
+                idx
+                for idx, name in enumerate(filtered_names)
+                if name == BIG_BROTHER_NAME
+                and EASTER_EGG_BAND in filtered_band_sets[idx]
+            ),
+            None,
+        )
+        hidden_indices = {
+            idx
+            for idx in (easter_egg_filtered_idx, big_brother_filtered_idx)
+            if idx is not None
+        }
+        raw_max_idx = int(np.argmax(cos_results))
+        visible_indices = [
+            idx for idx in range(len(cos_results)) if idx not in hidden_indices
+        ]
+        if not visible_indices and raw_max_idx not in hidden_indices:
+            visible_indices = [raw_max_idx]
+        if not visible_indices:
+            continue
+        max_idx = max(visible_indices, key=lambda idx: cos_results[idx])
+        if (
+            big_brother_filtered_idx is not None
+            and display_score(cos_results[big_brother_filtered_idx])
+            >= BIG_BROTHER_TRIGGER_SCORE
+        ):
+            max_idx = big_brother_filtered_idx
+            easter_egg_triggered = "big_brother"
+        elif (
+            easter_egg_filtered_idx is not None
+            and (
+                raw_max_idx == easter_egg_filtered_idx
+                or display_score(cos_results[easter_egg_filtered_idx])
+                >= EASTER_EGG_TRIGGER_SCORE
+            )
+        ):
+            max_idx = easter_egg_filtered_idx
+            easter_egg_triggered = "liyuu"
+        else:
+            easter_egg_triggered = ""
+        top_indices = [
+            idx
+            for idx in np.argsort(cos_results)[::-1]
+            if idx not in hidden_indices
+        ][:5]
         top5 = [
             {
                 "name": filtered_names[idx],
@@ -438,12 +512,25 @@ def recognize(
             ]
         results.append(
             {
-                "name": filtered_names[max_idx],
+                "name": (
+                    EASTER_EGG_DISPLAY_NAME
+                    if easter_egg_triggered == "liyuu"
+                    else filtered_names[max_idx]
+                ),
+                "avatar_name": filtered_names[max_idx],
                 "band": encode_bands(filtered_band_sets[max_idx]),
                 "bands": sorted(filtered_band_sets[max_idx]),
                 "similarity": round(float(cos_results[max_idx]), 4),
                 "display_score": display_score(cos_results[max_idx]),
-                "top5": top5,
+                "top5": [] if easter_egg_triggered else top5,
+                "easter_egg": easter_egg_triggered,
+                "easter_egg_message": (
+                    EASTER_EGG_MESSAGE
+                    if easter_egg_triggered == "liyuu"
+                    else BIG_BROTHER_MESSAGE
+                    if easter_egg_triggered == "big_brother"
+                    else ""
+                ),
                 "bbox": bbox,
             }
         )
