@@ -16,12 +16,28 @@ import threading
 import uuid
 import re
 import queue
+import hashlib
+import hmac
+import secrets
 from contextlib import contextmanager
 
 try:
     import fcntl
 except ImportError:
     fcntl = None
+
+_dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.isfile(_dotenv_path):
+    with open(_dotenv_path, "r", encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            _k = _k.strip()
+            _v = _v.strip().strip('"').strip("'")
+            if _k and _k not in os.environ:
+                os.environ[_k] = _v
 
 UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 AVATAR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar")
@@ -59,6 +75,8 @@ DEFAULT_MTCNN_THRESHOLDS = [0.3, 0.7, 0.7]
 LOW_MTCNN_THRESHOLDS = [0.2, 0.3, 0.5]
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 STATIC_CACHE_SECONDS = 7 * 24 * 60 * 60
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+ADMIN_TOKEN_TTL = 24 * 60 * 60
 job_queue = queue.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
 EASTER_EGG_BAND = "???"
 EASTER_EGG_NAME = "liyuu"
@@ -306,6 +324,234 @@ def infer_name_bands(names):
         for name in people:
             by_name.setdefault(name, set()).add(band)
     return [encode_bands(by_name.get(name, set())) for name in names]
+
+
+def admin_create_token():
+    expiry = str(int(time.time()) + ADMIN_TOKEN_TTL)
+    sig = hmac.new(ADMIN_PASSWORD.encode(), expiry.encode(), hashlib.sha256).hexdigest()
+    return f"{expiry}.{sig}"
+
+
+def admin_check_token(token):
+    if not token or not ADMIN_PASSWORD:
+        return False
+    parts = token.split(".", 1)
+    if len(parts) != 2:
+        return False
+    expiry_str, sig = parts
+    try:
+        expiry = int(expiry_str)
+    except ValueError:
+        return False
+    if time.time() > expiry:
+        return False
+    expected = hmac.new(ADMIN_PASSWORD.encode(), expiry_str.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+def admin_list_photos(day=None):
+    photos = []
+    base = UPLOAD_PHOTOS_DIR
+    if day:
+        dirs = [daily_upload_dir(day)]
+    else:
+        dirs = []
+        if os.path.isdir(base):
+            for d in sorted(os.listdir(base), reverse=True):
+                dp = os.path.join(base, d)
+                if os.path.isdir(dp) and not d.startswith("."):
+                    dirs.append(dp)
+    history_lookup = {}
+    for photo_dir in dirs:
+        day_name = os.path.basename(photo_dir)
+        hf = daily_history_file(day_name)
+        if not os.path.isfile(hf):
+            # also check old-style history.json
+            old_hf = os.path.join(HISTORY_DIR, "history.json")
+            if os.path.isfile(old_hf) and not history_lookup:
+                try:
+                    with open(old_hf, "r", encoding="utf-8") as f:
+                        old_data = json.load(f)
+                    for rec in old_data:
+                        photo_rel = rec.get("photo", "")
+                        if photo_rel.startswith("uploads/"):
+                            photo_rel = photo_rel[len("uploads/"):]
+                        history_lookup.setdefault(photo_rel, []).append({
+                            "faces": rec.get("faces", []),
+                            "mode": rec.get("mode", ""),
+                            "bands": rec.get("bands", []),
+                            "time": rec.get("time", ""),
+                        })
+                except Exception:
+                    pass
+            continue
+        with open(hf, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    photo_rel = rec.get("photo", "")
+                    if photo_rel.startswith("uploads/"):
+                        photo_rel = photo_rel[len("uploads/"):]
+                    history_lookup.setdefault(photo_rel, []).append({
+                        "faces": rec.get("faces", []),
+                        "mode": rec.get("mode", ""),
+                        "bands": rec.get("bands", []),
+                        "time": rec.get("time", ""),
+                    })
+                except json.JSONDecodeError:
+                    pass
+    for photo_dir in dirs:
+        if not os.path.isdir(photo_dir):
+            continue
+        day_name = os.path.basename(photo_dir)
+        for fn in sorted(os.listdir(photo_dir), reverse=True):
+            if fn.startswith(".") or not os.path.splitext(fn)[1].lower() in ALLOWED_IMAGE_EXTENSIONS:
+                continue
+            fp = os.path.join(photo_dir, fn)
+            try:
+                size = os.path.getsize(fp)
+            except OSError:
+                size = 0
+            photo_rel = f"photos/{day_name}/{fn}"
+            photos.append({
+                "filename": fn,
+                "day": day_name,
+                "path": photo_rel,
+                "size": size,
+                "history": history_lookup.get(photo_rel),
+            })
+    return photos
+
+
+def admin_list_history(day=None):
+    records = []
+    if day:
+        paths = [daily_history_file(day)]
+    else:
+        if os.path.isdir(HISTORY_DIR):
+            paths = sorted(
+                [os.path.join(HISTORY_DIR, f) for f in os.listdir(HISTORY_DIR)
+                 if f.endswith(".jsonl") and not f.startswith(".")],
+                reverse=True,
+            )
+        else:
+            paths = []
+    for hp in paths:
+        if not os.path.isfile(hp):
+            continue
+        with open(hp, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return records
+
+
+def admin_list_feedback():
+    records = []
+    if not os.path.isfile(FEEDBACK_FILE):
+        return records
+    with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return records
+
+
+def admin_list_faces_upload():
+    result = {}
+    if not os.path.isdir(FACES_UPLOAD_DIR):
+        return result
+    for band in sorted(os.listdir(FACES_UPLOAD_DIR)):
+        band_path = os.path.join(FACES_UPLOAD_DIR, band)
+        if not os.path.isdir(band_path) or band.startswith("."):
+            continue
+        roles = {}
+        for role in sorted(os.listdir(band_path)):
+            role_path = os.path.join(band_path, role)
+            if not os.path.isdir(role_path) or role.startswith("."):
+                continue
+            files = []
+            for fn in sorted(os.listdir(role_path)):
+                if fn.startswith("."):
+                    continue
+                fp = os.path.join(role_path, fn)
+                try:
+                    size = os.path.getsize(fp)
+                except OSError:
+                    size = 0
+                files.append({"filename": fn, "size": size})
+            if files:
+                roles[role] = files
+        if roles:
+            result[band] = roles
+    return result
+
+
+def admin_stats():
+    photo_count = 0
+    photo_size = 0
+    if os.path.isdir(UPLOAD_PHOTOS_DIR):
+        for root, _, files in os.walk(UPLOAD_PHOTOS_DIR):
+            for fn in files:
+                if fn.startswith("."):
+                    continue
+                fp = os.path.join(root, fn)
+                try:
+                    photo_size += os.path.getsize(fp)
+                    photo_count += 1
+                except OSError:
+                    pass
+    history_days = 0
+    history_records = 0
+    if os.path.isdir(HISTORY_DIR):
+        for fn in os.listdir(HISTORY_DIR):
+            if fn.endswith(".jsonl") and not fn.startswith("."):
+                history_days += 1
+                with open(os.path.join(HISTORY_DIR, fn), "r", encoding="utf-8") as f:
+                    history_records += sum(1 for l in f if l.strip())
+    feedback_count = 0
+    if os.path.isfile(FEEDBACK_FILE):
+        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+            feedback_count = sum(1 for l in f if l.strip())
+    faces_upload_count = 0
+    faces_upload_size = 0
+    if os.path.isdir(FACES_UPLOAD_DIR):
+        for root, _, files in os.walk(FACES_UPLOAD_DIR):
+            for fn in files:
+                if fn.startswith("."):
+                    continue
+                fp = os.path.join(root, fn)
+                try:
+                    faces_upload_size += os.path.getsize(fp)
+                    faces_upload_count += 1
+                except OSError:
+                    pass
+    return {
+        "photo_count": photo_count,
+        "photo_size": photo_size,
+        "history_days": history_days,
+        "history_records": history_records,
+        "feedback_count": feedback_count,
+        "faces_upload_count": faces_upload_count,
+        "faces_upload_size": faces_upload_size,
+        "job_queue_size": job_queue.qsize(),
+    }
+
+
+ADMIN_HTML_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "admin.html")
 
 
 def normalize_feature_bands(names, bands):
@@ -577,6 +823,24 @@ class FaceHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def admin_get_token(self):
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            return auth[7:].strip()
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("sm_admin="):
+                return part[len("sm_admin="):]
+        return ""
+
+    def admin_require(self):
+        token = self.admin_get_token()
+        if not admin_check_token(token):
+            self.send_json(401, {"error": "unauthorized"})
+            return None
+        return token
+
     def send_static_file(self, path, content_type):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
@@ -714,7 +978,10 @@ class FaceHandler(BaseHTTPRequestHandler):
         self.send_json(200, {"ok": True})
 
     def do_GET(self):
-        if self.path == "/" or self.path == "/index.html":
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        if path == "/" or path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -723,7 +990,101 @@ class FaceHandler(BaseHTTPRequestHandler):
             )
             with open(html_path, "rb") as f:
                 self.wfile.write(f.read())
-        elif self.path.startswith("/avatar/"):
+        elif path == "/uploads":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            if os.path.isfile(ADMIN_HTML_FILE):
+                with open(ADMIN_HTML_FILE, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.wfile.write(b"admin.html not found")
+        elif path == "/admin/api/stats":
+            if not self.admin_require():
+                return
+            self.send_json(200, admin_stats())
+        elif path == "/admin/api/photos":
+            if not self.admin_require():
+                return
+            params = urllib.parse.parse_qs(parsed.query)
+            day = params.get("day", [""])[0] or None
+            self.send_json(200, {"photos": admin_list_photos(day)})
+        elif path == "/admin/api/history":
+            if not self.admin_require():
+                return
+            params = urllib.parse.parse_qs(parsed.query)
+            day = params.get("day", [""])[0] or None
+            self.send_json(200, {"records": admin_list_history(day)})
+        elif path == "/admin/api/feedback":
+            if not self.admin_require():
+                return
+            self.send_json(200, {"records": admin_list_feedback()})
+        elif path == "/admin/api/faces_upload":
+            if not self.admin_require():
+                return
+            self.send_json(200, {"data": admin_list_faces_upload()})
+        elif path == "/admin/api/photo_days":
+            if not self.admin_require():
+                return
+            days = []
+            if os.path.isdir(UPLOAD_PHOTOS_DIR):
+                for d in sorted(os.listdir(UPLOAD_PHOTOS_DIR), reverse=True):
+                    dp = os.path.join(UPLOAD_PHOTOS_DIR, d)
+                    if not os.path.isdir(dp) or d.startswith("."):
+                        continue
+                    count = 0
+                    size = 0
+                    for fn in os.listdir(dp):
+                        if fn.startswith("."):
+                            continue
+                        if os.path.splitext(fn)[1].lower() not in ALLOWED_IMAGE_EXTENSIONS:
+                            continue
+                        count += 1
+                        try:
+                            size += os.path.getsize(os.path.join(dp, fn))
+                        except OSError:
+                            pass
+                    if count:
+                        days.append({"day": d, "count": count, "size": size})
+            self.send_json(200, {"days": days})
+        elif path == "/admin/api/history_days":
+            if not self.admin_require():
+                return
+            days = []
+            if os.path.isdir(HISTORY_DIR):
+                days = sorted(
+                    [os.path.splitext(f)[0] for f in os.listdir(HISTORY_DIR)
+                     if f.endswith(".jsonl") and not f.startswith(".")],
+                    reverse=True,
+                )
+            self.send_json(200, {"days": days})
+        elif path.startswith("/admin/photo/"):
+            if not self.admin_require():
+                return
+            rel = urllib.parse.unquote(path[len("/admin/photo/"):])
+            abs_path = os.path.normpath(os.path.join(UPLOADS_DIR, rel))
+            if not abs_path.startswith(UPLOADS_DIR) or not os.path.isfile(abs_path):
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_static_file(abs_path, image_content_type(abs_path))
+        elif path.startswith("/admin/faces_upload_photo/"):
+            if not self.admin_require():
+                return
+            rel = urllib.parse.unquote(path[len("/admin/faces_upload_photo/"):])
+            abs_path = os.path.normpath(os.path.join(FACES_UPLOAD_DIR, rel))
+            if not abs_path.startswith(FACES_UPLOAD_DIR) or not os.path.isfile(abs_path):
+                self.send_response(404)
+                self.end_headers()
+                return
+            ext = os.path.splitext(abs_path)[1].lower()
+            ct = "image/jpeg"
+            if ext == ".png":
+                ct = "image/png"
+            elif ext == ".webp":
+                ct = "image/webp"
+            self.send_static_file(abs_path, ct)
+        elif path.startswith("/avatar/"):
             name = urllib.parse.unquote(self.path[len("/avatar/"):])
             photo = find_avatar_file(name)
             if photo:
@@ -761,6 +1122,43 @@ class FaceHandler(BaseHTTPRequestHandler):
         started = time.time()
         parsed_path = urllib.parse.urlparse(self.path)
         content_length = int(self.headers.get("Content-Length", 0))
+        if parsed_path.path == "/admin/login":
+            body = self.rfile.read(max(content_length, 0))
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                self.send_json(400, {"error": "invalid json"})
+                return
+            pwd = data.get("password", "")
+            if not ADMIN_PASSWORD or pwd != ADMIN_PASSWORD:
+                self.send_json(403, {"error": "wrong password"})
+                return
+            tok = admin_create_token()
+            data = json.dumps({"token": tok}, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Set-Cookie", f"sm_admin={tok}; Path=/")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if parsed_path.path == "/admin/api/delete_photo":
+            if not self.admin_require():
+                return
+            body = self.rfile.read(max(content_length, 0))
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except Exception:
+                self.send_json(400, {"error": "invalid json"})
+                return
+            rel = data.get("path", "")
+            abs_path = os.path.normpath(os.path.join(UPLOADS_DIR, rel))
+            if not abs_path.startswith(UPLOADS_DIR) or not os.path.isfile(abs_path):
+                self.send_json(404, {"error": "file not found"})
+                return
+            os.remove(abs_path)
+            self.send_json(200, {"ok": True})
+            return
         if parsed_path.path == "/upload_faces":
             self.handle_face_upload(content_length)
             return

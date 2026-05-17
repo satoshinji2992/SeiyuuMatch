@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SeiyuuMatch Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: -apple-system, "Helvetica Neue", sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            min-height: 100vh
+        }
+
+        #loginScreen {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh
+        }
+
+        .login-box {
+            width: min(92vw, 380px);
+            padding: 40px 32px;
+            border: 1px solid #2a2a40;
+            border-radius: 16px;
+            background: #151527;
+            text-align: center
+        }
+
+        .login-box h1 {
+            font-size: 22px;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #ff6b9d, #c44dff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent
+        }
+
+        .login-box p {
+            color: #888;
+            font-size: 13px;
+            margin-bottom: 24px
+        }
+
+        .login-box input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #34344f;
+            border-radius: 10px;
+            background: #101020;
+            color: #fff;
+            font-size: 15px;
+            outline: none;
+            margin-bottom: 16px
+        }
+
+        .login-box input:focus {
+            border-color: #c44dff
+        }
+
+        .login-box button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #ff6b9d, #c44dff);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer
+        }
+
+        .login-box .error {
+            color: #ff6b9d;
+            font-size: 13px;
+            margin-top: 12px
+        }
+
+        #dashboard {
+            display: none
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 24px;
+            border-bottom: 1px solid #1e1e36;
+            background: #111122
+        }
+
+        .topbar h2 {
+            font-size: 16px;
+            font-weight: 700
+        }
+
+        .topbar button {
+            padding: 6px 16px;
+            border: 1px solid #34344f;
+            border-radius: 8px;
+            background: transparent;
+            color: #e0e0e0;
+            font-size: 13px;
+            cursor: pointer
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid #1e1e36;
+            padding: 0 24px;
+            background: #111122
+        }
+
+        .tab {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            color: #888;
+            font-size: 14px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent
+        }
+
+        .tab.active {
+            color: #fff;
+            border-bottom-color: #c44dff
+        }
+
+        .content {
+            padding: 24px;
+            max-width: 1200px;
+            margin: 0 auto
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            margin-bottom: 28px
+        }
+
+        .stat-card {
+            padding: 18px;
+            border: 1px solid #2a2a40;
+            border-radius: 12px;
+            background: #151527
+        }
+
+        .stat-card .label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 6px
+        }
+
+        .stat-card .value {
+            font-size: 24px;
+            font-weight: 700
+        }
+
+        .stat-card .value.accent {
+            background: linear-gradient(135deg, #ff6b9d, #c44dff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent
+        }
+
+        .panel {
+            display: none
+        }
+
+        .panel.active {
+            display: block
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 18px;
+            flex-wrap: wrap
+        }
+
+        .toolbar button {
+            padding: 8px 16px;
+            border: 1px solid #34344f;
+            border-radius: 8px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-size: 13px;
+            cursor: pointer
+        }
+
+        .toolbar button:hover {
+            border-color: #c44dff
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 18px;
+            font-size: 14px
+        }
+
+        .breadcrumb a {
+            color: #c44dff;
+            cursor: pointer;
+            text-decoration: none
+        }
+
+        .breadcrumb span {
+            color: #888
+        }
+
+        /* File manager - folder cards */
+        .folder-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 14px
+        }
+
+        .folder-card {
+            padding: 20px;
+            border: 1px solid #2a2a40;
+            border-radius: 12px;
+            background: #151527;
+            cursor: pointer;
+            transition: border-color .2s
+        }
+
+        .folder-card:hover {
+            border-color: #c44dff
+        }
+
+        .folder-card .folder-icon {
+            font-size: 28px;
+            margin-bottom: 8px
+        }
+
+        .folder-card .folder-name {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 4px
+        }
+
+        .folder-card .folder-info {
+            color: #888;
+            font-size: 12px
+        }
+
+        /* Photo grid */
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 10px
+        }
+
+        .photo-item {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #1a1a2e;
+            border: 1px solid #2a2a40;
+            cursor: pointer;
+            aspect-ratio: 1
+        }
+
+        .photo-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block
+        }
+
+        .photo-item .photo-del {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(255, 60, 60, .85);
+            color: #fff;
+            border: none;
+            font-size: 14px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2
+        }
+
+        .photo-item:hover .photo-del {
+            display: flex
+        }
+
+        .photo-item .photo-info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 6px 8px;
+            background: linear-gradient(transparent, rgba(0, 0, 0, .75));
+            font-size: 11px;
+            color: #ccc
+        }
+
+        .photo-item .has-history {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #50c878
+        }
+
+        /* Detail panel */
+        .detail-panel {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            display: none;
+            background: rgba(15, 15, 26, .95);
+            overflow-y: auto
+        }
+
+        .detail-panel.show {
+            display: block
+        }
+
+        .detail-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 32px 24px
+        }
+
+        .detail-close {
+            position: fixed;
+            top: 16px;
+            right: 24px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1px solid #34344f;
+            background: #151527;
+            color: #fff;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 51
+        }
+
+        .detail-img {
+            width: 100%;
+            max-height: 50vh;
+            object-fit: contain;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            background: #1a1a2e
+        }
+
+        .detail-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px
+        }
+
+        .detail-meta-item {
+            padding: 12px;
+            border: 1px solid #2a2a40;
+            border-radius: 10px;
+            background: #151527
+        }
+
+        .detail-meta-item .label {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 4px
+        }
+
+        .detail-meta-item .val {
+            font-size: 14px;
+            font-weight: 600
+        }
+
+        .face-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px
+        }
+
+        .face-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border: 1px solid #2a2a40;
+            border-radius: 10px;
+            background: #151527
+        }
+
+        .face-row .face-rank {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b9d, #c44dff);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+            flex-shrink: 0
+        }
+
+        .face-row .face-name {
+            font-weight: 700;
+            flex: 1
+        }
+
+        .face-row .face-score {
+            color: #ff9abb;
+            font-weight: 700;
+            font-size: 15px
+        }
+
+        .face-row .face-bands {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap
+        }
+
+        /* Tables */
+        table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px
+        }
+
+        table.data-table th {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #2a2a40;
+            color: #888;
+            font-weight: 600
+        }
+
+        table.data-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #1a1a2e
+        }
+
+        table.data-table tr:hover td {
+            background: #151527
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600
+        }
+
+        .tag-pink {
+            background: rgba(255, 107, 157, .15);
+            color: #ff6b9d
+        }
+
+        .tag-purple {
+            background: rgba(196, 77, 255, .15);
+            color: #c44dff
+        }
+
+        .tag-green {
+            background: rgba(80, 200, 120, .15);
+            color: #50c878
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loginScreen">
+        <div class="login-box">
+            <h1>SeiyuuMatch Admin</h1>
+            <p>输入管理员密码以继续</p>
+            <input type="password" id="pwdInput" placeholder="密码" autocomplete="current-password">
+            <button id="loginBtn" type="button">登录</button>
+            <div id="loginError" class="error"></div>
+        </div>
+    </div>
+    <div id="dashboard">
+        <div class="topbar">
+            <h2>SeiyuuMatch 管理后台</h2>
+            <button id="logoutBtn">退出登录</button>
+        </div>
+        <div class="tabs">
+            <button class="tab active" data-panel="overview">概览</button>
+            <button class="tab" data-panel="photos">上传照片</button>
+            <button class="tab" data-panel="history">识别记录</button>
+            <button class="tab" data-panel="feedback">用户反馈</button>
+            <button class="tab" data-panel="faces">数据集上传</button>
+        </div>
+        <div class="content">
+            <div id="overview" class="panel active">
+                <div class="stats" id="statsGrid"></div>
+            </div>
+            <div id="photos" class="panel">
+                <div class="toolbar">
+                    <button id="photoRefresh">刷新</button>
+                </div>
+                <div id="photoBreadcrumb" class="breadcrumb" style="display:none">
+                    <a onclick="exitPhotoFolder()">照片</a><span>›</span><span id="photoFolderName"></span>
+                </div>
+                <div id="photoContent"></div>
+            </div>
+            <div id="history" class="panel">
+                <div class="toolbar">
+                    <select id="historyDay">
+                        <option value="">全部日期</option>
+                    </select>
+                    <button id="historyRefresh">刷新</button>
+                </div>
+                <div id="historyContent"></div>
+            </div>
+            <div id="feedback" class="panel">
+                <div class="toolbar">
+                    <button id="feedbackRefresh">刷新</button>
+                </div>
+                <div id="feedbackContent"></div>
+            </div>
+            <div id="faces" class="panel">
+                <div class="toolbar">
+                    <button id="facesRefresh">刷新</button>
+                </div>
+                <div id="facesContent"></div>
+            </div>
+        </div>
+    </div>
+    <div class="detail-panel" id="detailPanel">
+        <button class="detail-close" onclick="closeDetail()">&times;</button>
+        <div class="detail-inner" id="detailInner"></div>
+    </div>
+
+    <script>
+        const TOKEN_KEY = 'sm_admin_token';
+        let token = localStorage.getItem(TOKEN_KEY) || '';
+        const $ = s => document.querySelector(s);
+        const $$ = s => document.querySelectorAll(s);
+        let currentPhotoDay = null;
+
+        function api(path, opts = {}) {
+            const headers = opts.headers || {};
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            return fetch(path, { ...opts, headers }).then(async r => {
+                const text = await r.text();
+                let data;
+                try { data = JSON.parse(text) } catch { throw new Error(text || 'error') }
+                if (r.status === 401) { token = ''; localStorage.removeItem(TOKEN_KEY); showLogin(); throw new Error('session expired') }
+                if (!r.ok) throw new Error(data.error || 'request failed');
+                return data;
+            });
+        }
+        function showLogin() { $('#loginScreen').style.display = 'flex'; $('#dashboard').style.display = 'none'; closeDetail() }
+        function showDashboard() {
+            document.cookie = 'sm_admin=' + token + '; Path=/';
+            $('#loginScreen').style.display = 'none';
+            $('#dashboard').style.display = 'block';
+            loadStats();
+        }
+        function fmtSize(b) {
+            if (b < 1024) return b + 'B';
+            if (b < 1048576) return (b / 1024).toFixed(1) + 'KB';
+            return (b / 1048576).toFixed(1) + 'MB';
+        }
+
+        // Login
+        $('#loginBtn').onclick = async () => {
+            const pwd = $('#pwdInput').value;
+            if (!pwd) return;
+            $('#loginError').textContent = '';
+            try {
+                const d = await api('/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+                token = d.token; localStorage.setItem(TOKEN_KEY, token); showDashboard();
+            } catch (e) { $('#loginError').textContent = e.message }
+        };
+        $('#pwdInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginBtn').click() });
+        $('#logoutBtn').onclick = () => { token = ''; localStorage.removeItem(TOKEN_KEY); document.cookie = 'sm_admin=; Path=/; Max-Age=0'; showLogin() };
+
+        // Tabs
+        $$('.tab').forEach(btn => {
+            btn.onclick = () => {
+                $$('.tab').forEach(b => b.classList.remove('active'));
+                $$('.panel').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                $('#' + btn.dataset.panel).classList.add('active');
+                if (btn.dataset.panel === 'photos') { currentPhotoDay = null; loadPhotoFolders() }
+                if (btn.dataset.panel === 'history') { loadHistoryDays(); loadHistory() }
+                if (btn.dataset.panel === 'feedback') loadFeedback();
+                if (btn.dataset.panel === 'faces') loadFaces();
+            };
+        });
+
+        // Stats
+        function loadStats() {
+            api('/admin/api/stats').then(s => {
+                $('#statsGrid').innerHTML = `
+      <div class="stat-card"><div class="label">上传照片数</div><div class="value accent">${s.photo_count}</div></div>
+      <div class="stat-card"><div class="label">照片占用</div><div class="value">${fmtSize(s.photo_size)}</div></div>
+      <div class="stat-card"><div class="label">识别记录</div><div class="value accent">${s.history_records}</div></div>
+      <div class="stat-card"><div class="label">历史天数</div><div class="value">${s.history_days}</div></div>
+      <div class="stat-card"><div class="label">用户反馈</div><div class="value">${s.feedback_count}</div></div>
+      <div class="stat-card"><div class="label">数据集上传</div><div class="value">${s.faces_upload_count} 文件 / ${fmtSize(s.faces_upload_size)}</div></div>
+      <div class="stat-card"><div class="label">任务队列</div><div class="value">${s.job_queue_size}</div></div>
+    `;
+            }).catch(() => { });
+        }
+
+        // ===== Photos - File Manager =====
+        function loadPhotoFolders() {
+            api('/admin/api/photo_days').then(d => {
+                const days = d.days || [];
+                if (!days.length) { $('#photoContent').innerHTML = '<div class="empty-state">暂无照片</div>'; return }
+                let html = '<div class="folder-grid">';
+                days.forEach(d => {
+                    html += `<div class="folder-card" onclick="enterPhotoFolder('${d.day}')">
+        <div class="folder-icon">📁</div>
+        <div class="folder-name">${d.day}</div>
+        <div class="folder-info">${d.count} 张 · ${fmtSize(d.size)}</div>
+      </div>`;
+                });
+                html += '</div>';
+                $('#photoContent').innerHTML = html;
+                $('#photoBreadcrumb').style.display = 'none';
+            }).catch(() => { $('#photoContent').innerHTML = '<div class="empty-state">加载失败</div>' });
+        }
+
+        function enterPhotoFolder(day) {
+            currentPhotoDay = day;
+            $('#photoBreadcrumb').style.display = 'flex';
+            $('#photoFolderName').textContent = day;
+            api('/admin/api/photos?day=' + day).then(d => {
+                renderPhotoGrid(d.photos || []);
+            }).catch(() => { $('#photoContent').innerHTML = '<div class="empty-state">加载失败</div>' });
+        }
+
+        function exitPhotoFolder() {
+            currentPhotoDay = null;
+            $('#photoBreadcrumb').style.display = 'none';
+            loadPhotoFolders();
+        }
+
+        function faceName(f) { return typeof f === 'string' ? f : f.name || '?' }
+        function faceScore(f) { return typeof f === 'string' ? '' : (f.display_score != null ? f.display_score + '%' : '') }
+        function faceBands(f) { return typeof f === 'string' ? [] : (f.bands || []) }
+
+        function renderPhotoGrid(photos) {
+            if (!photos.length) { $('#photoContent').innerHTML = '<div class="empty-state">该日期暂无照片</div>'; return }
+            let html = '<div class="photo-grid">';
+            photos.forEach(p => {
+                const imgUrl = '/admin/photo/' + p.path;
+                const hasHist = p.history && p.history.length ? '<div class="has-history"></div>' : '';
+                html += `<div class="photo-item" data-path="${p.path}" data-img="${imgUrl}">
+      ${hasHist}
+      <img src="${imgUrl}" loading="lazy" alt="">
+      <button class="photo-del" title="删除">&times;</button>
+      <div class="photo-info">${fmtSize(p.size)}${p.history && p.history.length ? ' · ' + (p.history[0].faces || []).map(faceName).join(', ') : ''}</div>
+    </div>`;
+            });
+            html += '</div>';
+            $('#photoContent').innerHTML = html;
+            $$('#photoContent .photo-item').forEach(el => {
+                el.querySelector('.photo-del').onclick = async (e) => {
+                    e.stopPropagation();
+                    if (!confirm('确认删除？')) return;
+                    try {
+                        await api('/admin/api/delete_photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: el.dataset.path }) });
+                        el.remove();
+                    } catch (err) { alert('删除失败: ' + err.message) }
+                };
+                el.onclick = e => {
+                    if (e.target.classList.contains('photo-del')) return;
+                    const path = el.dataset.path;
+                    const photo = (photos || []).find(p => p.path === path);
+                    openPhotoDetail(photo);
+                };
+            });
+        }
+
+        // Photo detail panel
+        function openPhotoDetail(photo) {
+            if (!photo) return;
+            const imgUrl = '/admin/photo/' + photo.path;
+            const hist = photo.history || [];
+            let html = `<img class="detail-img" src="${imgUrl}" alt="">
+    <div class="detail-meta">
+      <div class="detail-meta-item"><div class="label">文件</div><div class="val">${photo.filename}</div></div>
+      <div class="detail-meta-item"><div class="label">大小</div><div class="val">${fmtSize(photo.size)}</div></div>
+      <div class="detail-meta-item"><div class="label">日期</div><div class="val">${photo.day}</div></div>
+      <div class="detail-meta-item"><div class="label">识别次数</div><div class="val">${hist.length}</div></div>
+    </div>`;
+            if (hist.length) {
+                hist.forEach((h, hi) => {
+                    const faces = h.faces || [];
+                    const bands = (h.bands || []).map(b => `<span class="tag tag-purple">${b}</span>`).join(' ');
+                    html += `<div style="margin-bottom:16px">
+        <div style="color:#aaa;font-size:13px;margin-bottom:8px">${h.time || ''} · ${h.mode === 'relaxed' ? '<span class="tag tag-pink">relaxed</span>' : '<span class="tag tag-green">default</span>'} ${bands}</div>`;
+                    if (faces.length) {
+                        html += '<div class="face-list">';
+                        faces.forEach((f, fi) => {
+                            const name = faceName(f);
+                            const score = faceScore(f);
+                            const fbands = faceBands(f).map(b => `<span class="tag tag-purple">${b}</span>`).join(' ');
+                            html += `<div class="face-row">
+            <div class="face-rank">${fi + 1}</div>
+            <div class="face-name">${name}</div>
+            ${score ? `<div class="face-score">${score}</div>` : ''}
+            <div class="face-bands">${fbands}</div>
+          </div>`;
+                        });
+                        html += '</div>';
+                    } else {
+                        html += '<div style="color:#666;font-size:13px;padding:8px 0">未识别到人脸</div>';
+                    }
+                    html += '</div>';
+                });
+            } else {
+                html += '<div style="color:#666">无识别记录</div>';
+            }
+            $('#detailInner').innerHTML = html;
+            $('#detailPanel').classList.add('show');
+        }
+        function closeDetail() { $('#detailPanel').classList.remove('show') }
+        $('#photoRefresh').onclick = () => { if (currentPhotoDay) enterPhotoFolder(currentPhotoDay); else loadPhotoFolders() };
+
+        // ===== History =====
+        function loadHistoryDays() {
+            api('/admin/api/history_days').then(d => {
+                const sel = $('#historyDay'), val = sel.value;
+                sel.innerHTML = '<option value="">全部日期</option>';
+                (d.days || []).forEach(day => { sel.innerHTML += `<option value="${day}">${day}</option>` });
+                sel.value = val;
+            }).catch(() => { });
+        }
+        function loadHistory() {
+            const day = $('#historyDay').value || '';
+            api('/admin/api/history' + (day ? '?day=' + day : '')).then(d => {
+                let records = d.records || [];
+                if (!records.length) { $('#historyContent').innerHTML = '<div class="empty-state">暂无记录</div>'; return }
+                records.sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+                let rows = '';
+                records.forEach(r => {
+                    const faces = (r.faces || []).map(f => {
+                        const name = f.name || '?';
+                        const score = f.display_score != null ? f.display_score + '%' : '';
+                        const bands = (f.bands || []).map(b => `<span class="tag tag-purple">${b}</span>`).join(' ');
+                        return `<div style="margin:2px 0">${name} ${score} ${bands}</div>`;
+                    }).join('');
+                    rows += `<tr>
+        <td style="white-space:nowrap;color:#888">${r.time || ''}</td>
+        <td>${r.mode === 'relaxed' ? '<span class="tag tag-pink">relaxed</span>' : '<span class="tag tag-green">default</span>'}</td>
+        <td>${(r.bands || []).map(b => `<span class="tag tag-purple">${b}</span>`).join(' ')}</td>
+        <td>${faces || '-'}</td>
+        <td>${r.photo ? `<a href="/admin/photo/${encodeURIComponent(r.photo)}" target="_blank" style="color:#ff6b9d">查看</a>` : '-'}</td>
+      </tr>`;
+                });
+                $('#historyContent').innerHTML = `<table class="data-table"><thead><tr><th>时间</th><th>模式</th><th>范围</th><th>识别结果</th><th>照片</th></tr></thead><tbody>${rows}</tbody></table>`;
+            }).catch(() => { $('#historyContent').innerHTML = '<div class="empty-state">加载失败</div>' });
+        }
+        $('#historyRefresh').onclick = () => { loadHistoryDays(); loadHistory() };
+        $('#historyDay').onchange = loadHistory;
+
+        // ===== Feedback =====
+        function loadFeedback() {
+            api('/admin/api/feedback').then(d => {
+                const records = d.records || [];
+                if (!records.length) { $('#feedbackContent').innerHTML = '<div class="empty-state">暂无反馈</div>'; return }
+                let rows = '';
+                records.forEach(r => {
+                    rows += `<tr>
+        <td style="white-space:nowrap;color:#888">${r.time || ''}</td>
+        <td>${r.message || ''}</td>
+        <td style="color:#aaa">${r.contact || '-'}</td>
+        <td style="color:#666;font-size:11px">${r.ip || ''}<br>${r.user_agent || ''}</td>
+      </tr>`;
+                });
+                $('#feedbackContent').innerHTML = `<table class="data-table"><thead><tr><th>时间</th><th>内容</th><th>联系方式</th><th>IP / UA</th></tr></thead><tbody>${rows}</tbody></table>`;
+            }).catch(() => { $('#feedbackContent').innerHTML = '<div class="empty-state">加载失败</div>' });
+        }
+        $('#feedbackRefresh').onclick = loadFeedback;
+
+        // ===== Faces upload =====
+        function loadFaces() {
+            api('/admin/api/faces_upload').then(d => {
+                const data = d.data || {};
+                const bands = Object.keys(data);
+                if (!bands.length) { $('#facesContent').innerHTML = '<div class="empty-state">暂无数据集上传</div>'; return }
+                let html = '';
+                bands.forEach(band => {
+                    const roles = data[band];
+                    html += `<div style="margin-bottom:24px"><h3 style="font-size:15px;margin-bottom:10px;color:#aaa;font-weight:600">${band}</h3>`;
+                    Object.entries(roles).forEach(([role, files]) => {
+                        html += `<div style="margin-bottom:12px"><div style="color:#aaa;font-size:13px;margin-bottom:6px">${role} (${files.length}张)</div><div class="photo-grid">`;
+                        files.forEach(f => {
+                            const src = '/admin/faces_upload_photo/' + encodeURIComponent(band) + '/' + encodeURIComponent(role) + '/' + encodeURIComponent(f.filename);
+                            html += `<div class="photo-item" onclick="openFaceDetail('${src}')">
+            <img src="${src}" loading="lazy" alt="">
+            <div class="photo-info">${fmtSize(f.size)}</div>
+          </div>`;
+                        });
+                        html += '</div></div>';
+                    });
+                    html += '</div>';
+                });
+                $('#facesContent').innerHTML = html;
+            }).catch(() => { $('#facesContent').innerHTML = '<div class="empty-state">加载失败</div>' });
+        }
+        $('#facesRefresh').onclick = loadFaces;
+
+        function openFaceDetail(src) {
+            $('#detailInner').innerHTML = `<img class="detail-img" src="${src}" alt="">`;
+            $('#detailPanel').classList.add('show');
+        }
+
+        // ESC to close detail
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail() });
+        $('#detailPanel').onclick = e => { if (e.target === $('#detailPanel')) closeDetail() };
+
+        // Auto-login
+        if (token) {
+            fetch('/admin/api/stats', { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(r => { if (r.ok) showDashboard(); else { token = ''; localStorage.removeItem(TOKEN_KEY) } })
+                .catch(() => { token = ''; localStorage.removeItem(TOKEN_KEY) });
+        }
+    </script>
+</body>
+
+</html>
