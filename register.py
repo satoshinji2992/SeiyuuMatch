@@ -16,8 +16,8 @@ HIDDEN_GROUP = "???"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
-def feature_id(project, name):
-    return f"{project}/{name}"
+def feature_id(project, group, name):
+    return f"{project}/{group}/{name}"
 
 
 def encode_values(values):
@@ -112,38 +112,30 @@ def iter_people(faces_dir, project_filter=None, group_filter=None, name_filter=N
 
 
 def register(app, faces_dir, project=None, group=None, name=None):
-    people = {}
+    entries = []
     for project_name, group_name, person_name, person_dir in iter_people(
         faces_dir, project, group, name
     ):
-        key = (project_name, person_name)
-        people.setdefault(key, {"groups": set(), "vecs": []})
-        people[key]["groups"].add(group_name)
-        people[key]["vecs"].extend(collect_person_vectors(app, person_dir))
-
-    rows = []
-    for (project_name, person_name), payload in sorted(people.items()):
-        vecs = payload["vecs"]
+        vecs = collect_person_vectors(app, person_dir)
         if not vecs:
-            print(f"  Warning: no usable faces for {project_name}/{person_name}, skipping")
+            print(f"  Warning: no usable faces for {project_name}/{group_name}/{person_name}, skipping")
             continue
-        groups = sorted(payload["groups"])
         vector = mean_feature(vecs)
-        rows.append(
+        entries.append(
             {
-                "id": feature_id(project_name, person_name),
+                "id": feature_id(project_name, group_name, person_name),
                 "name": person_name,
                 "project": project_name,
-                "groups": encode_values(groups),
+                "groups": group_name,
                 "feature": vector,
                 "photos": len(vecs),
             }
         )
         print(
-            f"  Registered: {person_name} [{project_name}/{','.join(groups)}] "
+            f"  Registered: {person_name} [{project_name}/{group_name}] "
             f"({len(vecs)} photos)"
         )
-    return rows
+    return entries
 
 
 def load_existing(output, vector_dim):
@@ -205,6 +197,19 @@ def upsert_rows(output, rows):
     print(f"Saved {len(ids)} feature vectors to {output}")
 
 
+def iter_groups(faces_dir):
+    for project_entry in sorted(os.scandir(faces_dir), key=lambda e: e.name):
+        if not project_entry.is_dir() or project_entry.name.startswith("."):
+            continue
+        if project_entry.name == HIDDEN_GROUP:
+            yield HIDDEN_PROJECT, HIDDEN_GROUP
+            continue
+        for group_entry in sorted(os.scandir(project_entry.path), key=lambda e: e.name):
+            if not group_entry.is_dir() or group_entry.name.startswith("."):
+                continue
+            yield project_entry.name, group_entry.name
+
+
 def main():
     parser = argparse.ArgumentParser(description="Register faces and save features (InsightFace)")
     parser.add_argument("-o", "--output", default=FEATURES_FILE)
@@ -216,6 +221,11 @@ def main():
         action="store_true",
         help="Register hidden candidates from faces/???",
     )
+    parser.add_argument(
+        "--by-group",
+        action="store_true",
+        help="Register group by group to reduce memory usage",
+    )
     args = parser.parse_args()
 
     if args.group and not args.project:
@@ -224,9 +234,36 @@ def main():
     if args.hidden and (args.project or args.group):
         print("Error: --hidden cannot be combined with --project or --group")
         sys.exit(1)
+    if args.by_group and (args.group or args.name):
+        print("Error: --by-group cannot be combined with --group or --name")
+        sys.exit(1)
 
     print("Loading InsightFace buffalo_l...")
     app = load_insightface()
+
+    if args.by_group:
+        first = True
+        for project_name, group_name in iter_groups(FACES_DIR):
+            if args.project and project_name != args.project:
+                continue
+            if project_name == HIDDEN_PROJECT:
+                continue
+            print(f"\nRegistering [{project_name}/{group_name}]...")
+            rows = register(app, FACES_DIR, project=project_name, group=group_name)
+            if not rows:
+                print(f"  No faces in {project_name}/{group_name}, skipping")
+                continue
+            if first:
+                save_rows(args.output, rows)
+                first = False
+            else:
+                upsert_rows(args.output, rows)
+            gc.collect()
+        if first:
+            print("Error: no faces registered")
+            sys.exit(1)
+        print("\nAll groups registered.")
+        return
 
     project = HIDDEN_PROJECT if args.hidden else args.project
     print("Registering faces...")

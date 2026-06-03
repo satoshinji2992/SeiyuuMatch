@@ -26,13 +26,16 @@
         .privacy-locked>h1,
         .privacy-locked>.subtitle,
         .privacy-locked>.subtitle-note,
-        .privacy-locked>#bandFilter,
+        .privacy-locked>.band-filter-wrap,
         .privacy-locked>#dropzone,
         .privacy-locked>#preview,
         .privacy-locked>#loading,
         .privacy-locked>#results,
+        .privacy-locked>#swapResult,
+        .privacy-locked>#resultActions,
         .privacy-locked>#relaxedRetry,
         .privacy-locked>#retry,
+        .privacy-locked>#swapButton,
         .privacy-locked>#collectorFab {
             filter: blur(2px);
             pointer-events: none;
@@ -74,14 +77,93 @@
             font-weight: 700;
         }
 
-        .band-filter {
+        .band-filter-wrap {
             width: 90%;
             max-width: 720px;
             margin: 0 0 22px;
+        }
+
+        .band-tabs {
+            display: flex;
+            gap: 2px;
+            margin-bottom: -1px;
+            padding: 0 12px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .band-tab {
+            padding: 5px 14px;
+            border: 1px solid #2a2a40;
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            background: #0e0e1c;
+            color: #8888aa;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s, border-color 0.2s;
+        }
+
+        .band-filter {
             padding: 16px;
             border: 1px solid #2a2a40;
-            border-radius: 12px;
+            border-radius: 0 12px 12px 12px;
             background: #151527;
+        }
+
+        .band-tab[data-project="bangdream"] {
+            background: rgba(255, 107, 157, 0.12);
+            color: #ff6b9d;
+            border-color: rgba(255, 107, 157, 0.25);
+        }
+
+        .band-tab[data-project="bangdream"].active {
+            background: #151527;
+            color: #ff6b9d;
+            border-color: rgba(255, 107, 157, 0.5);
+            z-index: 1;
+        }
+
+        .band-tab[data-project="bangdream"]:hover:not(.active) {
+            background: rgba(255, 107, 157, 0.2);
+            color: #ff8db5;
+        }
+
+        .band-tab[data-project="lovelive"] {
+            background: rgba(240, 192, 64, 0.12);
+            color: #f0c040;
+            border-color: rgba(240, 192, 64, 0.25);
+        }
+
+        .band-tab[data-project="lovelive"].active {
+            background: #151527;
+            color: #f0c040;
+            border-color: rgba(240, 192, 64, 0.5);
+            z-index: 1;
+        }
+
+        .band-tab[data-project="lovelive"]:hover:not(.active) {
+            background: rgba(240, 192, 64, 0.2);
+            color: #f5d060;
+        }
+
+        .band-tab-badge {
+            display: none;
+            margin-left: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            background: rgba(255, 107, 157, 0.8);
+            color: #fff;
+            border-radius: 8px;
+            padding: 0 5px;
+            min-width: 14px;
+            text-align: center;
+            line-height: 16px;
+        }
+
+        .band-tab-badge.visible {
+            display: inline-block;
         }
 
         .band-filter-title {
@@ -235,6 +317,50 @@
             width: 90%;
             max-width: 600px;
             margin-top: 30px;
+        }
+
+        #swapResult {
+            display: none;
+            width: 90%;
+            max-width: 600px;
+            margin-top: 18px;
+        }
+
+        .swap-card {
+            background: #1a1a2e;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid #2a2a40;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .swap-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 16px 18px 14px;
+        }
+
+        .swap-card-header h2 {
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .swap-download {
+            color: #ff9abb;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .swap-download:hover {
+            color: #ffc4d8;
+        }
+
+        .swap-card img {
+            width: 100%;
+            display: block;
         }
 
         .result-card {
@@ -457,7 +583,7 @@
 
         #retry {
             display: none;
-            margin: 24px 0 90px;
+            margin: 0;
             padding: 12px 32px;
             border: none;
             border-radius: 25px;
@@ -489,6 +615,40 @@
 
         #relaxedRetry:hover {
             background: #c44dff;
+        }
+
+        #resultActions {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: 24px 0 90px;
+        }
+
+        #swapButton {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 46px;
+            height: 46px;
+            border: none;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #c44dff, #8f5bff);
+            color: #fff;
+            font-size: 22px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 12px 28px rgba(196, 77, 255, 0.35);
+        }
+
+        #swapButton:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 32px rgba(196, 77, 255, 0.42);
+        }
+
+        #swapButton:disabled {
+            opacity: 0.55;
+            cursor: wait;
         }
 
         #privacyNotice {
@@ -851,17 +1011,24 @@
         </div>
     </div>
     <button id="privacyHelp" type="button" aria-label="查看隐私提示">?</button>
-    <h1>你长得最像哪个邦多利女声优？</h1>
+    <h1>你长得最像哪个女声优？</h1>
     <p class="subtitle">上传一张照片，看看最像谁！</p>
     <p class="subtitle-note">推荐使用公众人物或女声优照片体验，<span class="privacy-emphasis">谨慎上传隐私图片</span></p>
-    <section id="bandFilter" class="band-filter">
-        <div class="band-filter-title">
-            <h2>识别范围</h2>
-            <button id="bandSelectAll" type="button"
-                style="background:none;border:1px solid #5a5a7a;color:#d6d6e6;padding:2px 10px;border-radius:10px;font-size:12px;cursor:pointer">全选</button>
+    <div class="band-filter-wrap">
+        <div class="band-tabs">
+            <button class="band-tab active" data-project="bangdream">bangdream<span
+                    class="band-tab-badge"></span></button>
+            <button class="band-tab" data-project="lovelive">lovelive<span class="band-tab-badge"></span></button>
         </div>
-        <div id="bandFilterOptions"></div>
-    </section>
+        <section id="bandFilter" class="band-filter">
+            <div class="band-filter-title">
+                <h2>识别范围</h2>
+                <button id="bandSelectAll" type="button"
+                    style="background:none;border:1px solid #5a5a7a;color:#d6d6e6;padding:2px 10px;border-radius:10px;font-size:12px;cursor:pointer">全选</button>
+            </div>
+            <div id="bandFilterOptions"></div>
+        </section>
+    </div>
     <div id="dropzone" onclick="document.getElementById('fileInput').click()">
         <div class="icon">📷</div>
         <p>拖拽图片到这里，或者 <span>点击上传</span></p>
@@ -874,8 +1041,12 @@
         <p id="loadingText">正在识别中...</p>
     </div>
     <div id="results"></div>
+    <div id="swapResult"></div>
     <button id="relaxedRetry" onclick="retryRelaxed()">识别不到? 点击这里降低阈值再试一次!</button>
-    <button id="retry" onclick="resetAll()">再来一张</button>
+    <div id="resultActions">
+        <button id="retry" onclick="resetAll()">再来一张</button>
+        <button id="swapButton" type="button" aria-label="一键换脸" title="一键换脸">⇄</button>
+    </div>
     <button id="feedbackFab" type="button">反馈意见</button>
     <button id="collectorFab" type="button">上传数据集</button>
     <div id="feedbackModal" aria-hidden="true">
@@ -937,8 +1108,11 @@
         const loading = document.getElementById('loading');
         const loadingText = document.getElementById('loadingText');
         const results = document.getElementById('results');
+        const swapResult = document.getElementById('swapResult');
+        const resultActions = document.getElementById('resultActions');
         const retry = document.getElementById('retry');
         const relaxedRetry = document.getElementById('relaxedRetry');
+        const swapButton = document.getElementById('swapButton');
         const privacyNotice = document.getElementById('privacyNotice');
         const agreePrivacy = document.getElementById('agreePrivacy');
         const privacyHelp = document.getElementById('privacyHelp');
@@ -962,10 +1136,17 @@
         const bandFilterOptions = document.getElementById('bandFilterOptions');
         const bandSelectAll = document.getElementById('bandSelectAll');
         const scaleSelect = document.getElementById('scaleSelect');
+        const MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
+        const MAX_SWAP_UPLOAD_BYTES = 20 * 1024 * 1024;
         let lastUploadBuffer = null;
+        let lastOriginalBuffer = null;
+        let lastOriginalFile = null;
+        let lastSwapUrl = null;
         let bandRoles = {};
         let datasetCounts = {};
         const defaultRecognitionBands = ['bangdream:mygo', 'bangdream:avemujica'];
+        let activeProject = 'bangdream';
+        const selectedBands = new Set(defaultRecognitionBands);
         const pageScaleKey = 'seiyuumatchPageScale';
         const bandOrder = [
             'bangdream:ppp',
@@ -1122,24 +1303,66 @@
         }
 
         function populateRecognitionBands() {
-            const bands = orderedBands();
+            const bands = orderedBands().filter(band => splitGroupKey(band).project === activeProject);
             bandFilterOptions.innerHTML = bands.map(band => {
-                const checked = defaultRecognitionBands.includes(band) ? 'checked' : '';
+                const checked = selectedBands.has(band) ? 'checked' : '';
                 const recommended = defaultRecognitionBands.includes(band) ? ' recommended' : '';
+                const parsed = splitGroupKey(band);
+                const displayName = parsed.group || groupLabel(band);
                 return `
       <label class="band-option${recommended}" title="${groupLabel(band)}">
         <input type="checkbox" name="recognitionBand" value="${band}" ${checked}>
-        <span class="band-option-name">${groupLabel(band)}</span>
+        <span class="band-option-name">${displayName}</span>
       </label>
     `;
             }).join('');
+            updateSelectAllText();
+            updateTabBadges();
         }
 
+        bandFilterOptions.addEventListener('change', () => {
+            bandFilterOptions.querySelectorAll('input[name="recognitionBand"]').forEach(input => {
+                if (input.checked) {
+                    selectedBands.add(input.value);
+                } else {
+                    selectedBands.delete(input.value);
+                }
+            });
+            updateSelectAllText();
+            updateTabBadges();
+        });
+
+        function updateTabBadges() {
+            document.querySelectorAll('.band-tab').forEach(tab => {
+                const project = tab.dataset.project;
+                const count = [...selectedBands].filter(b => b.startsWith(project + ':')).length;
+                const badge = tab.querySelector('.band-tab-badge');
+                if (count > 0) {
+                    badge.textContent = count;
+                    badge.classList.add('visible');
+                } else {
+                    badge.classList.remove('visible');
+                }
+            });
+        }
+
+        function updateSelectAllText() {
+            const boxes = bandFilterOptions.querySelectorAll('input[name="recognitionBand"]');
+            const allChecked = boxes.length > 0 && [...boxes].every(b => b.checked);
+            bandSelectAll.textContent = allChecked ? '取消全选' : '全选';
+        }
+
+        document.querySelectorAll('.band-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                activeProject = tab.dataset.project;
+                document.querySelectorAll('.band-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                populateRecognitionBands();
+            });
+        });
+
         function getSelectedRecognitionBands() {
-            const selected = Array.from(
-                bandFilterOptions.querySelectorAll('input[name="recognitionBand"]:checked')
-            ).map(input => input.value);
-            return selected.length ? selected : defaultRecognitionBands;
+            return selectedBands.size ? [...selectedBands] : [...defaultRecognitionBands];
         }
 
         function openCollector() {
@@ -1168,9 +1391,17 @@
         loadFaceGroups();
         bandSelectAll.addEventListener('click', () => {
             const boxes = bandFilterOptions.querySelectorAll('input[name="recognitionBand"]');
-            const allChecked = [...boxes].every(b => b.checked);
-            boxes.forEach(b => b.checked = !allChecked);
-            bandSelectAll.textContent = allChecked ? '全选' : '取消全选';
+            const allChecked = boxes.length > 0 && [...boxes].every(b => b.checked);
+            boxes.forEach(b => {
+                b.checked = !allChecked;
+                if (b.checked) {
+                    selectedBands.add(b.value);
+                } else {
+                    selectedBands.delete(b.value);
+                }
+            });
+            updateSelectAllText();
+            updateTabBadges();
         });
         bandSelect.addEventListener('change', populateRoles);
         roleSelect.addEventListener('change', updateDatasetCount);
@@ -1184,6 +1415,7 @@
         collectorModal.addEventListener('click', e => {
             if (e.target === collectorModal) closeCollectorModal();
         });
+        swapButton.addEventListener('click', swapFaces);
 
         collectorForm.addEventListener('submit', e => {
             e.preventDefault();
@@ -1263,15 +1495,21 @@
             previewImg.src = URL.createObjectURL(file);
             preview.style.display = 'block';
             dropzone.style.display = 'none';
+            clearSwapResult();
+            resultActions.style.display = 'none';
+            swapButton.disabled = false;
 
             loading.style.display = 'block';
             loadingText.textContent = '正在识别中...';
             results.style.display = 'none';
             retry.style.display = 'none';
             relaxedRetry.style.display = 'none';
-
-            resizeImage(file)
-                .then(blob => blob.arrayBuffer())
+            file.arrayBuffer()
+                .then(buffer => {
+                    lastOriginalBuffer = buffer;
+                    lastOriginalFile = file;
+                    return resizeImage(file).then(blob => blob.arrayBuffer());
+                })
                 .then(buffer => {
                     lastUploadBuffer = buffer;
                     return recognizeBuffer(buffer, false);
@@ -1335,6 +1573,9 @@
             loading.style.display = 'block';
             loadingText.textContent = '正在降低阈值重新识别...';
             results.style.display = 'none';
+            clearSwapResult();
+            resultActions.style.display = 'none';
+            swapButton.disabled = false;
             retry.style.display = 'none';
             relaxedRetry.style.display = 'none';
 
@@ -1347,13 +1588,17 @@
             console.error(err);
             loading.style.display = 'none';
             results.style.display = 'block';
+            clearSwapResult();
+            resultActions.style.display = 'flex';
+            retry.style.display = 'inline-flex';
+            swapButton.style.display = 'none';
+            swapButton.disabled = false;
             results.innerHTML = '';
             const message = document.createElement('p');
             message.style.color = '#ff6b9d';
             message.style.textAlign = 'center';
             message.textContent = `识别失败：${err && err.message ? err.message : '请重试'}`;
             results.appendChild(message);
-            retry.style.display = 'inline-block';
         }
 
         function resizeImage(file, maxSize = 1280, quality = 0.84) {
@@ -1424,10 +1669,41 @@
             `;
         }
 
+        function clearSwapResult() {
+            if (lastSwapUrl && lastSwapUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(lastSwapUrl);
+            }
+            lastSwapUrl = null;
+            swapResult.innerHTML = '';
+            swapResult.style.display = 'none';
+        }
+
+        function renderSwapResult(imageUrl) {
+            clearSwapResult();
+            lastSwapUrl = imageUrl;
+            swapResult.innerHTML = `
+                <div class="swap-card">
+                    <div class="swap-card-header">
+                        <h2>换脸结果</h2>
+                        <a class="swap-download" id="swapDownload" href="${lastSwapUrl}" download="seiyuumatch-swap.jpg">下载</a>
+                    </div>
+                    <img src="${lastSwapUrl}" alt="换脸结果">
+                </div>
+            `;
+            swapResult.style.display = 'block';
+        }
+
+        function setResultActionState(showSwap) {
+            resultActions.style.display = 'flex';
+            retry.style.display = 'inline-flex';
+            swapButton.style.display = showSwap ? 'inline-flex' : 'none';
+        }
+
         function showResults(faces, details = [], mode = 'default') {
             loading.style.display = 'none';
             results.style.display = 'block';
-            retry.style.display = 'inline-block';
+            clearSwapResult();
+            setResultActionState(faces.length > 0);
             relaxedRetry.style.display = mode !== 'relaxed' && lastUploadBuffer ? 'inline-block' : 'none';
             results.innerHTML = '';
             if (!faces.length) {
@@ -1493,14 +1769,112 @@
             });
         }
 
+        function swapFaces() {
+            if ((!lastOriginalBuffer && !lastOriginalFile) || swapButton.disabled) return;
+            swapButton.disabled = true;
+            clearSwapResult();
+            loading.style.display = 'block';
+            loadingText.textContent = '正在换脸中...';
+
+            getSwapBuffer()
+                .then(buffer => {
+                    const apiBase = '//' + location.host;
+                    const params = new URLSearchParams();
+                    params.set('groups', getSelectedRecognitionBands().join(','));
+                    const url = `${apiBase}/swap_faces?${params.toString()}`;
+                    return fetch(url, { method: 'POST', body: buffer });
+                })
+                .then(async r => {
+                    const text = await r.text();
+                    let data = {};
+                    try {
+                        data = text ? JSON.parse(text) : {};
+                    } catch {
+                        throw new Error(text || '服务器返回格式异常');
+                    }
+                    if (!r.ok) throw new Error(data.error || '换脸失败');
+                    return data;
+                })
+                .then(data => {
+                    if (!data.job_id) throw new Error('换脸任务未返回 job_id');
+                    loadingText.textContent = '已加入换脸队列...';
+                    return pollSwapJob(data.job_id);
+                })
+                .then(result => {
+                    loading.style.display = 'none';
+                    if (result && result.image_path) {
+                        renderSwapResult(`${result.image_path}?t=${Date.now()}`);
+                        return;
+                    }
+                    throw new Error('换脸结果缺少图片路径');
+                })
+                .catch(err => {
+                    loading.style.display = 'none';
+                    console.error(err);
+                    swapResult.style.display = 'none';
+                    const message = document.createElement('p');
+                    message.style.color = '#ff6b9d';
+                    message.style.textAlign = 'center';
+                    message.textContent = `换脸失败：${err && err.message ? err.message : '请重试'}`;
+                    swapResult.innerHTML = '';
+                    swapResult.appendChild(message);
+                    swapResult.style.display = 'block';
+                })
+                .finally(() => {
+                    swapButton.disabled = false;
+                });
+        }
+
+        function pollSwapJob(jobId, startedAt = Date.now()) {
+            const apiBase = '//' + location.host;
+            return fetch(`${apiBase}/job/${encodeURIComponent(jobId)}`)
+                .then(async r => {
+                    const text = await r.text();
+                    let data = {};
+                    try {
+                        data = text ? JSON.parse(text) : {};
+                    } catch {
+                        throw new Error(text || '服务器返回格式异常');
+                    }
+                    if (!r.ok) throw new Error(data.error || 'request failed');
+                    if (data.status === 'done') return data.result || {};
+                    if (data.status === 'failed') throw new Error(data.error || '换脸任务失败');
+                    if (Date.now() - startedAt > 120000) throw new Error('换脸等待超时，请稍后再试');
+                    loadingText.textContent = data.status === 'running'
+                        ? '正在换脸中...'
+                        : '排队中，请稍候...';
+                    return new Promise(resolve => {
+                        setTimeout(() => resolve(pollSwapJob(jobId, startedAt)), 800);
+                    });
+                });
+        }
+
+        function getSwapBuffer() {
+            if (lastOriginalBuffer && lastOriginalBuffer.byteLength <= MAX_SWAP_UPLOAD_BYTES) {
+                return Promise.resolve(lastOriginalBuffer);
+            }
+            if (!lastOriginalFile) {
+                return Promise.resolve(lastUploadBuffer);
+            }
+            return resizeImage(lastOriginalFile, 2048, 0.97)
+                .then(blob => blob.arrayBuffer())
+                .catch(() => lastUploadBuffer || lastOriginalBuffer);
+        }
+
         function resetAll() {
             dropzone.style.display = 'block';
             preview.style.display = 'none';
             loading.style.display = 'none';
             results.style.display = 'none';
+            clearSwapResult();
+            resultActions.style.display = 'none';
             retry.style.display = 'none';
             relaxedRetry.style.display = 'none';
+            swapButton.style.display = 'none';
+            swapButton.disabled = false;
             lastUploadBuffer = null;
+            lastOriginalBuffer = null;
+            lastOriginalFile = null;
             fileInput.value = '';
         }
 

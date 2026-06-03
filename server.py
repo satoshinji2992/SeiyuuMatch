@@ -2,6 +2,7 @@ import os
 import sys
 import socket
 import argparse
+import multiprocessing as mp
 import numpy as np
 import cv2
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -45,6 +46,7 @@ FACES_UPLOAD_DIR = os.path.join(
 )
 FEEDBACK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedback")
 JOBS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobs")
+JOB_RESULTS_DIR = os.path.join(JOBS_DIR, "results")
 FEEDBACK_FILE = os.path.join(FEEDBACK_DIR, "feedback.jsonl")
 UPLOAD_PHOTOS_DIR = os.path.join(UPLOADS_DIR, "photos")
 HISTORY_DIR = os.path.join(UPLOADS_DIR, "history")
@@ -58,22 +60,27 @@ os.makedirs(ICON_DIR, exist_ok=True)
 os.makedirs(FACES_UPLOAD_DIR, exist_ok=True)
 os.makedirs(FEEDBACK_DIR, exist_ok=True)
 os.makedirs(JOBS_DIR, exist_ok=True)
+os.makedirs(JOB_RESULTS_DIR, exist_ok=True)
 
 history_lock = threading.Lock()
-recognition_lock = threading.Lock()
-recognition_slots = threading.BoundedSemaphore(1)
 RECOGNITION_QUEUE_TIMEOUT = float(os.environ.get("RECOGNITION_QUEUE_TIMEOUT", "30"))
 JOB_QUEUE_MAX_SIZE = int(os.environ.get("JOB_QUEUE_MAX_SIZE", "200"))
 MAX_IMAGE_DIM = int(os.environ.get("MAX_IMAGE_DIM", "1280"))
 MAX_UPLOAD_BYTES = 6 * 1024 * 1024
+MAX_SWAP_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_FACE_UPLOAD_BYTES = 80 * 1024 * 1024
 MAX_FACE_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FEEDBACK_BYTES = 16 * 1024
+JOB_STALE_TIMEOUT = int(os.environ.get("JOB_STALE_TIMEOUT", "120"))
+SWAP_FACE_SHARPEN_AMOUNT = float(os.environ.get("SWAP_FACE_SHARPEN_AMOUNT", "0.9"))
+SWAP_FACE_SHARPEN_RADIUS = int(os.environ.get("SWAP_FACE_SHARPEN_RADIUS", "18"))
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 STATIC_CACHE_SECONDS = 7 * 24 * 60 * 60
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ADMIN_TOKEN_TTL = 24 * 60 * 60
-job_queue = queue.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
+INSWAPPER_MODEL_NAME = os.environ.get("INSWAPPER_MODEL_NAME", "inswapper_128.onnx")
+recognition_job_queue = mp.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
+swap_job_queue = mp.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
 HIDDEN_PROJECT = "__hidden__"
 HIDDEN_GROUP = "???"
 EASTER_EGG_NAME = "liyuu"
@@ -123,6 +130,10 @@ def job_path(job_id):
     return os.path.join(JOBS_DIR, f"{safe_path_segment(job_id, 'job')}.json")
 
 
+def job_result_path(job_id):
+    return os.path.join(JOB_RESULTS_DIR, f"{safe_path_segment(job_id, 'job')}.png")
+
+
 def write_job_status(job_id, payload):
     payload = dict(payload)
     payload["job_id"] = job_id
@@ -140,7 +151,25 @@ def read_job_status(job_id):
     if not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        status = json.load(f)
+    if status.get("status") in {"queued", "running"}:
+        ts = status.get("started_at") or status.get("created_at") or status.get("updated_at")
+        try:
+            started = time.strptime(ts, "%Y-%m-%d %H:%M:%S") if ts else None
+        except ValueError:
+            started = None
+        if started is not None:
+            age = time.time() - time.mktime(started)
+            if age > JOB_STALE_TIMEOUT:
+                status = dict(status)
+                status["status"] = "failed"
+                status["error"] = "识别任务超时，请重试"
+                status["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                try:
+                    write_job_status(job_id, status)
+                except Exception:
+                    pass
+    return status
 
 
 def make_recognition_payload(result, relaxed, det_score_threshold, selected_groups, queue_wait):
@@ -559,8 +588,18 @@ def admin_stats():
         "feedback_count": feedback_count,
         "faces_upload_count": faces_upload_count,
         "faces_upload_size": faces_upload_size,
-        "job_queue_size": job_queue.qsize(),
+        "job_queue_size": queue_size_safe(),
     }
+
+
+def queue_size_safe():
+    total = 0
+    for q in (recognition_job_queue, swap_job_queue):
+        try:
+            total += q.qsize()
+        except Exception:
+            pass
+    return total
 
 
 ADMIN_HTML_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "admin.html")
@@ -589,6 +628,58 @@ def load_insightface():
     return app
 
 
+def load_inswapper():
+    from insightface import model_zoo
+    return model_zoo.get_model(
+        INSWAPPER_MODEL_NAME,
+        providers=["CPUExecutionProvider"],
+        download=True,
+    )
+
+
+def load_feature_bundle(features_path):
+    data = np.load(features_path, allow_pickle=True)
+    required_keys = {"names", "projects", "groups", "features"}
+    if not required_keys.issubset(set(data.files)):
+        raise RuntimeError("features.npz uses the old schema; run python3 register.py first")
+    names = [str(n) for n in data["names"]]
+    projects = [str(p) for p in data["projects"]]
+    groups = [str(g) for g in data["groups"]]
+    feature_db = data["features"]
+    feature_norms = np.linalg.norm(feature_db, axis=1)
+    return {
+        "names": names,
+        "projects": projects,
+        "groups": groups,
+        "feature_db": feature_db,
+        "feature_norms": feature_norms,
+    }
+
+
+def load_runtime(features_path, include_swapper=False):
+    runtime = load_feature_bundle(features_path)
+    runtime["insightface_app"] = load_insightface()
+    runtime["inswapper"] = load_inswapper() if include_swapper else None
+    return runtime
+
+
+def detect_faces_insightface(
+    insightface_app,
+    image_bytes,
+    det_score_threshold,
+    resize=True,
+):
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img_raw = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img_raw is None:
+        return None, []
+    if resize:
+        img_raw = resize_for_recognition(img_raw)
+    detected_faces = insightface_app.get(img_raw)
+    detected_faces = [f for f in detected_faces if f.det_score >= det_score_threshold]
+    return img_raw, detected_faces
+
+
 def result_entry(name, project, groups, similarity):
     return {
                 "name": name,
@@ -603,6 +694,39 @@ def result_entry(name, project, groups, similarity):
     }
 
 
+def dedup_results(entries):
+    merged = {}
+    for entry in entries:
+        key = entry["name"]
+        if key not in merged or entry["similarity"] > merged[key]["similarity"]:
+            base = dict(entry)
+            if key in merged:
+                prev = merged[key]
+                base["groups"] = sorted(set(prev["groups"]) | set(base["groups"]))
+                base["bands"] = list(base["groups"])
+                base["group"] = encode_values(base["groups"])
+                base["band"] = base["group"]
+                prev_projects = prev["projects"] if prev["projects"] else []
+                cur_projects = base["projects"] if base["projects"] else []
+                all_projects = list(dict.fromkeys(prev_projects + cur_projects))
+                base["projects"] = all_projects
+                base["project"] = all_projects[0] if all_projects else base["project"]
+            merged[key] = base
+        else:
+            prev = merged[key]
+            prev["groups"] = sorted(set(prev["groups"]) | set(entry["groups"]))
+            prev["bands"] = list(prev["groups"])
+            prev["group"] = encode_values(prev["groups"])
+            prev["band"] = prev["group"]
+            prev_projects = prev["projects"] if prev["projects"] else []
+            cur_projects = entry["projects"] if entry["projects"] else []
+            all_projects = list(dict.fromkeys(prev_projects + cur_projects))
+            prev["projects"] = all_projects
+            if not prev["project"]:
+                prev["project"] = all_projects[0] if all_projects else ""
+    return sorted(merged.values(), key=lambda e: e["similarity"], reverse=True)
+
+
 def recognize_insightface(
     insightface_app,
     names,
@@ -614,13 +738,14 @@ def recognize_insightface(
     det_score_threshold,
     selected_groups,
 ):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img_raw = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    img_raw, detected_faces = detect_faces_insightface(
+        insightface_app,
+        image_bytes,
+        det_score_threshold,
+        resize=False,
+    )
     if img_raw is None:
         return []
-    img_raw = resize_for_recognition(img_raw)
-    detected_faces = insightface_app.get(img_raw)
-    detected_faces = [f for f in detected_faces if f.det_score >= det_score_threshold]
 
     group_sets = [parse_values(group_value) for group_value in groups]
     entry_group_keys = [
@@ -695,8 +820,8 @@ def recognize_insightface(
 
         top_indices = [
             idx for idx in np.argsort(cos_results)[::-1] if idx not in hidden_indices
-        ][:5]
-        top5 = [
+        ][:15]
+        top5_raw = [
             result_entry(
                 filtered_names[idx],
                 filtered_projects[idx],
@@ -705,6 +830,7 @@ def recognize_insightface(
             )
             for idx in top_indices
         ]
+        top5 = dedup_results(top5_raw)[:5]
 
         bbox = None
         box = face.bbox
@@ -716,18 +842,31 @@ def recognize_insightface(
                 float(box[3]) / img_h,
             ]
 
+        best_name = filtered_names[max_idx]
+        best_project = filtered_projects[max_idx]
+        best_groups = set(filtered_group_sets[max_idx])
+        best_similarity = cos_results[max_idx]
+        for idx in range(len(filtered_names)):
+            if idx == max_idx or idx in hidden_indices:
+                continue
+            if filtered_names[idx] == best_name:
+                best_groups.update(filtered_group_sets[idx])
+                if cos_results[idx] > best_similarity:
+                    best_similarity = cos_results[idx]
+                    best_project = filtered_projects[idx]
+
         result = result_entry(
-            EASTER_EGG_DISPLAY_NAME if easter_egg_triggered == "liyuu" else filtered_names[max_idx],
-            filtered_projects[max_idx],
-            filtered_group_sets[max_idx],
+            EASTER_EGG_DISPLAY_NAME if easter_egg_triggered == "liyuu" else best_name,
+            best_project,
+            best_groups,
             cos_results[max_idx],
         )
         result.update(
             {
-                "avatar_name": filtered_names[max_idx],
-                "avatar_project": filtered_projects[max_idx],
-                "avatar_group": sorted(filtered_group_sets[max_idx])[0]
-                if filtered_group_sets[max_idx]
+                "avatar_name": best_name,
+                "avatar_project": best_project,
+                "avatar_group": sorted(best_groups)[0]
+                if best_groups
                 else "",
                 "top5": [] if easter_egg_triggered else top5,
                 "easter_egg": easter_egg_triggered,
@@ -745,8 +884,114 @@ def recognize_insightface(
     return results
 
 
+def swap_faces_insightface(
+    insightface_app,
+    inswapper,
+    names,
+    projects,
+    groups,
+    feature_db,
+    feature_norms,
+    image_bytes,
+    det_score_threshold,
+    selected_groups,
+):
+    img_raw, detected_faces = detect_faces_insightface(
+        insightface_app, image_bytes, det_score_threshold
+    )
+    if img_raw is None or not detected_faces:
+        return None, []
+
+    recognition = recognize_insightface(
+        insightface_app,
+        names,
+        projects,
+        groups,
+        feature_db,
+        feature_norms,
+        image_bytes,
+        det_score_threshold,
+        selected_groups,
+    )
+    if not recognition:
+        return None, []
+
+    swap_result = img_raw.copy()
+    source_cache = {}
+    for face, detail in zip(detected_faces, recognition):
+        avatar_project = detail.get("avatar_project", "")
+        avatar_group = detail.get("avatar_group", "")
+        avatar_name = detail.get("avatar_name", "")
+        avatar_path = find_avatar_file(avatar_name, avatar_project, avatar_group)
+        if not avatar_path:
+            continue
+        cached = source_cache.get(avatar_path)
+        if cached is None:
+            source_img = cv2.imread(avatar_path)
+            if source_img is None:
+                source_cache[avatar_path] = None
+                continue
+            source_faces = insightface_app.get(source_img)
+            if not source_faces:
+                source_cache[avatar_path] = None
+                continue
+            cached = max(
+                source_faces,
+                key=lambda f: (
+                    float(getattr(f, "det_score", 0.0)),
+                    float((f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])),
+                ),
+            )
+            source_cache[avatar_path] = cached
+        if cached is None:
+            continue
+        swap_result = inswapper.get(swap_result, face, cached, paste_back=True)
+        swap_result = sharpen_face_region(
+            swap_result,
+            face,
+            amount=SWAP_FACE_SHARPEN_AMOUNT,
+            radius=SWAP_FACE_SHARPEN_RADIUS,
+        )
+    return swap_result, recognition
+
+
+def sharpen_face_region(image_bgr, face, amount=0.9, radius=18):
+    bbox = getattr(face, "bbox", None)
+    if bbox is None:
+        return image_bgr
+    h, w = image_bgr.shape[:2]
+    x1 = max(0, int(bbox[0]) - radius)
+    y1 = max(0, int(bbox[1]) - radius)
+    x2 = min(w, int(bbox[2]) + radius)
+    y2 = min(h, int(bbox[3]) + radius)
+    if x2 <= x1 or y2 <= y1:
+        return image_bgr
+
+    roi = image_bgr[y1:y2, x1:x2]
+    blurred = cv2.GaussianBlur(roi, (0, 0), sigmaX=1.1, sigmaY=1.1)
+    sharpened = cv2.addWeighted(roi, 1.0 + amount, blurred, -amount, 0)
+
+    mask = np.zeros((y2 - y1, x2 - x1), dtype=np.float32)
+    inner_x1 = min(x2 - x1, max(0, int(bbox[0]) - x1))
+    inner_y1 = min(y2 - y1, max(0, int(bbox[1]) - y1))
+    inner_x2 = max(0, min(x2 - x1, int(bbox[2]) - x1))
+    inner_y2 = max(0, min(y2 - y1, int(bbox[3]) - y1))
+    if inner_x2 <= inner_x1 or inner_y2 <= inner_y1:
+        image_bgr[y1:y2, x1:x2] = sharpened
+        return image_bgr
+
+    mask[inner_y1:inner_y2, inner_x1:inner_x2] = 1.0
+    blur_k = max(3, radius // 2 * 2 + 1)
+    mask = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
+    mask = mask[..., None]
+    mixed = roi * (1.0 - mask) + sharpened * mask
+    image_bgr[y1:y2, x1:x2] = np.clip(mixed, 0, 255).astype(np.uint8)
+    return image_bgr
+
+
 class FaceHandler(BaseHTTPRequestHandler):
     insightface_app = None
+    inswapper = None
     names = None
     projects = None
     groups = None
@@ -758,18 +1003,17 @@ class FaceHandler(BaseHTTPRequestHandler):
         now = time.localtime()
         day = daily_key(now)
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", now)
-        with recognition_lock:
-            result = recognize_insightface(
-                cls.insightface_app,
-                cls.names,
-                cls.projects,
-                cls.groups,
-                cls.feature_db,
-                cls.feature_norms,
-                body,
-                det_score_threshold,
-                selected_groups,
-            )
+        result = recognize_insightface(
+            cls.insightface_app,
+            cls.names,
+            cls.projects,
+            cls.groups,
+            cls.feature_db,
+            cls.feature_norms,
+            body,
+            det_score_threshold,
+            selected_groups,
+        )
         photo_name = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.jpg"
         photo_dir = daily_upload_dir(day)
         os.makedirs(photo_dir, exist_ok=True)
@@ -802,6 +1046,19 @@ class FaceHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_image(self, image_bgr):
+        ok, encoded = cv2.imencode(".jpg", image_bgr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            self.send_json(500, {"error": "image encode failed"})
+            return
+        data = encoded.tobytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -963,6 +1220,65 @@ class FaceHandler(BaseHTTPRequestHandler):
         print("[server] feedback saved", flush=True)
         self.send_json(200, {"ok": True})
 
+    def handle_face_swap(self, content_length):
+        if content_length <= 0:
+            self.send_json(400, {"error": "empty image"})
+            return
+        if content_length > MAX_SWAP_UPLOAD_BYTES:
+            self.send_json(413, {"error": "image too large"})
+            return
+
+        body = self.rfile.read(content_length)
+        parsed_path = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed_path.query)
+        relaxed = params.get("mode", [""])[0] == "relaxed"
+        requested_groups = parse_selected_groups(params.get("groups", [""])[0])
+        selected_groups = requested_groups or set(DEFAULT_SELECTED_GROUPS)
+        det_score_threshold = (
+            INSIGHTFACE_RELAXED_DET_SCORE if relaxed else INSIGHTFACE_DEFAULT_DET_SCORE
+        )
+        job_id = uuid.uuid4().hex
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        write_job_status(
+            job_id,
+            {
+                "status": "queued",
+                "created_at": now,
+                "updated_at": now,
+                "mode": "relaxed" if relaxed else "default",
+                "groups": sorted(selected_groups),
+                "bands": sorted(selected_groups),
+                "worker_pid": os.getpid(),
+                "job_type": "swap",
+            },
+        )
+        try:
+            swap_job_queue.put_nowait(
+                {
+                    "job_id": job_id,
+                    "body": body,
+                    "det_score_threshold": det_score_threshold,
+                    "selected_groups": selected_groups,
+                    "relaxed": relaxed,
+                    "content_length": content_length,
+                    "queued_at": time.time(),
+                }
+            )
+        except queue.Full:
+            write_job_status(
+                job_id,
+                {
+                    "status": "failed",
+                    "error": "服务器排队人数过多，请稍后再试",
+                    "created_at": now,
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "job_type": "swap",
+                },
+            )
+            self.send_json(503, {"error": "服务器排队人数过多，请稍后再试"})
+            return
+        self.send_json(202, {"job_id": job_id, "status": "queued"})
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -1086,26 +1402,34 @@ class FaceHandler(BaseHTTPRequestHandler):
                 return
             self.send_response(404)
             self.end_headers()
-        elif self.path.startswith("/icon/"):
-            name = urllib.parse.unquote(self.path[len("/icon/"):])
+        elif path.startswith("/icon/"):
+            name = urllib.parse.unquote(path[len("/icon/"):])
             icon = find_icon_file(name)
             if icon:
                 self.send_static_file(icon, image_content_type(icon))
                 return
             self.send_response(404)
             self.end_headers()
-        elif self.path.startswith("/job/"):
-            job_id = urllib.parse.unquote(self.path[len("/job/"):])
+        elif path.startswith("/job/"):
+            job_id = urllib.parse.unquote(path[len("/job/"):])
             status = read_job_status(job_id)
             if status is None:
                 self.send_json(404, {"error": "job not found"})
                 return
             self.send_json(200, status)
-        elif self.path == "/people":
+        elif path.startswith("/job_result/"):
+            job_id = urllib.parse.unquote(path[len("/job_result/"):])
+            img_path = job_result_path(job_id)
+            if os.path.isfile(img_path):
+                self.send_static_file(img_path, image_content_type(img_path))
+                return
+            self.send_response(404)
+            self.end_headers()
+        elif path == "/people":
             self.send_json(200, {"names": self.names})
-        elif self.path == "/face_groups":
+        elif path == "/face_groups":
             self.send_json(200, load_face_groups())
-        elif self.path == "/health":
+        elif path == "/health":
             self.send_json(200, {"ok": True, "people": len(self.names or [])})
         else:
             self.send_response(404)
@@ -1158,6 +1482,9 @@ class FaceHandler(BaseHTTPRequestHandler):
         if parsed_path.path == "/feedback":
             self.handle_feedback_upload(content_length)
             return
+        if parsed_path.path == "/swap_faces":
+            self.handle_face_swap(content_length)
+            return
 
         params = urllib.parse.parse_qs(parsed_path.query)
         relaxed = params.get("mode", [""])[0] == "relaxed"
@@ -1189,7 +1516,7 @@ class FaceHandler(BaseHTTPRequestHandler):
                 },
             )
             try:
-                job_queue.put_nowait(
+                recognition_job_queue.put_nowait(
                     {
                         "job_id": job_id,
                         "body": body,
@@ -1214,19 +1541,7 @@ class FaceHandler(BaseHTTPRequestHandler):
                 return
             self.send_json(202, {"job_id": job_id, "status": "queued"})
             return
-
-        queue_started = time.time()
-        if not recognition_slots.acquire(timeout=RECOGNITION_QUEUE_TIMEOUT):
-            self.send_json(
-                503,
-                {
-                    "error": "服务器正在识别中，请稍后再试",
-                    "queue_timeout": RECOGNITION_QUEUE_TIMEOUT,
-                },
-            )
-            return
-        queue_wait = time.time() - queue_started
-
+        queue_wait = 0.0
         try:
             payload = self.process_recognition(
                 body, det_score_threshold, selected_groups, relaxed, queue_wait
@@ -1239,14 +1554,13 @@ class FaceHandler(BaseHTTPRequestHandler):
             )
         except Exception as e:
             self.send_json(500, {"error": str(e)})
-        finally:
-            recognition_slots.release()
 
     def log_message(self, format, *args):
         print(f"[server] {args[0]}")
 
 
-def recognition_job_worker():
+def recognition_job_worker(features_path, job_queue):
+    runtime = load_runtime(features_path, include_swapper=False)
     while True:
         job = job_queue.get()
         job_id = job["job_id"]
@@ -1261,14 +1575,22 @@ def recognition_job_worker():
                     "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "queue_wait": round(queue_wait, 3),
                     "worker_pid": os.getpid(),
+                    "worker_kind": "recognition",
                 },
             )
-            payload = FaceHandler.process_recognition(
+            payload = recognize_insightface(
+                runtime["insightface_app"],
+                runtime["names"],
+                runtime["projects"],
+                runtime["groups"],
+                runtime["feature_db"],
+                runtime["feature_norms"],
                 job["body"],
                 job["det_score_threshold"],
                 job["selected_groups"],
-                job["relaxed"],
-                queue_wait,
+            )
+            payload = make_recognition_payload(
+                payload, job["relaxed"], job["det_score_threshold"], job["selected_groups"], queue_wait
             )
             elapsed = time.time() - started
             write_job_status(
@@ -1280,6 +1602,7 @@ def recognition_job_worker():
                     "elapsed": round(elapsed, 3),
                     "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "worker_pid": os.getpid(),
+                    "worker_kind": "recognition",
                 },
             )
             print(
@@ -1294,10 +1617,91 @@ def recognition_job_worker():
                     "error": str(e),
                     "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "worker_pid": os.getpid(),
+                    "worker_kind": "recognition",
                 },
             )
         finally:
-            job_queue.task_done()
+            try:
+                job_queue.task_done()
+            except Exception:
+                pass
+
+
+def swap_job_worker(features_path, job_queue):
+    runtime = load_runtime(features_path, include_swapper=True)
+    while True:
+        job = job_queue.get()
+        job_id = job["job_id"]
+        started = time.time()
+        queue_wait = started - job["queued_at"]
+        try:
+            write_job_status(
+                job_id,
+                {
+                    "status": "running",
+                    "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "queue_wait": round(queue_wait, 3),
+                    "worker_pid": os.getpid(),
+                    "worker_kind": "swap",
+                },
+            )
+            swapped_img, recognition = swap_faces_insightface(
+                runtime["insightface_app"],
+                runtime["inswapper"],
+                runtime["names"],
+                runtime["projects"],
+                runtime["groups"],
+                runtime["feature_db"],
+                runtime["feature_norms"],
+                job["body"],
+                job["det_score_threshold"],
+                job["selected_groups"],
+            )
+            if swapped_img is None or not recognition:
+                raise RuntimeError("没有检测到可替换的人脸")
+            result_path = job_result_path(job_id)
+            ok, encoded = cv2.imencode(".png", swapped_img)
+            if not ok:
+                raise RuntimeError("image encode failed")
+            with open(result_path, "wb") as f:
+                f.write(encoded.tobytes())
+            elapsed = time.time() - started
+            write_job_status(
+                job_id,
+                {
+                    "status": "done",
+                    "result": {
+                        "image_path": f"/job_result/{job_id}",
+                        "faces": [item["name"] for item in recognition],
+                    },
+                    "queue_wait": round(queue_wait, 3),
+                    "elapsed": round(elapsed, 3),
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "worker_pid": os.getpid(),
+                    "worker_kind": "swap",
+                },
+            )
+            print(
+                f"[server] SWAP JOB {job_id} {job['content_length']} bytes mode={'relaxed' if job['relaxed'] else 'default'} wait={queue_wait:.2f}s in {elapsed:.2f}s",
+                flush=True,
+            )
+        except Exception as e:
+            write_job_status(
+                job_id,
+                {
+                    "status": "failed",
+                    "error": str(e),
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "worker_pid": os.getpid(),
+                    "worker_kind": "swap",
+                },
+            )
+        finally:
+            try:
+                job_queue.task_done()
+            except Exception:
+                pass
 
 
 def main():
@@ -1307,30 +1711,35 @@ def main():
     parser.add_argument("-f", "--features", default=FEATURES_FILE)
     args = parser.parse_args()
 
-    print("Loading InsightFace buffalo_l...")
-    FaceHandler.insightface_app = load_insightface()
-
     print(f"Loading features from {args.features}...")
-    data = np.load(args.features, allow_pickle=True)
-    required_keys = {"names", "projects", "groups", "features"}
-    if not required_keys.issubset(set(data.files)):
-        print("Error: features.npz uses the old schema; run python3 register.py first")
-        sys.exit(1)
-    names = [str(n) for n in data["names"]]
-    projects = [str(p) for p in data["projects"]]
-    groups = [str(g) for g in data["groups"]]
-    feature_db = data["features"]
-    feature_norms = np.linalg.norm(feature_db, axis=1)
+    bundle = load_feature_bundle(args.features)
+    names = bundle["names"]
+    projects = bundle["projects"]
+    groups = bundle["groups"]
+    feature_db = bundle["feature_db"]
+    feature_norms = bundle["feature_norms"]
     print(f"Loaded {len(names)} people, feature dim: {feature_db.shape[1]}")
 
+    print("Loading InsightFace buffalo_l...")
+    FaceHandler.insightface_app = load_insightface()
     FaceHandler.names = names
     FaceHandler.projects = projects
     FaceHandler.groups = groups
     FaceHandler.feature_db = feature_db
     FaceHandler.feature_norms = feature_norms
 
-    worker = threading.Thread(target=recognition_job_worker, daemon=True)
-    worker.start()
+    recognition_worker = mp.Process(
+        target=recognition_job_worker,
+        args=(args.features, recognition_job_queue),
+        daemon=True,
+    )
+    recognition_worker.start()
+    swap_worker = mp.Process(
+        target=swap_job_worker,
+        args=(args.features, swap_job_queue),
+        daemon=True,
+    )
+    swap_worker.start()
 
     server = ThreadingHTTPServer((args.host, args.port), FaceHandler, False)
     server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1342,6 +1751,10 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down.")
         server.server_close()
+        recognition_worker.terminate()
+        swap_worker.terminate()
+        recognition_worker.join(timeout=3)
+        swap_worker.join(timeout=3)
 
 
 if __name__ == "__main__":
