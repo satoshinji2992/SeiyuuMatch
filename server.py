@@ -4,8 +4,6 @@ import socket
 import argparse
 import numpy as np
 import cv2
-import torch
-from PIL import Image
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from email.parser import BytesParser
 from email.policy import default as email_policy
@@ -71,30 +69,21 @@ MAX_UPLOAD_BYTES = 6 * 1024 * 1024
 MAX_FACE_UPLOAD_BYTES = 80 * 1024 * 1024
 MAX_FACE_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FEEDBACK_BYTES = 16 * 1024
-DEFAULT_MTCNN_THRESHOLDS = [0.3, 0.7, 0.7]
-LOW_MTCNN_THRESHOLDS = [0.2, 0.3, 0.5]
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 STATIC_CACHE_SECONDS = 7 * 24 * 60 * 60
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ADMIN_TOKEN_TTL = 24 * 60 * 60
 job_queue = queue.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
-EASTER_EGG_BAND = "???"
+HIDDEN_PROJECT = "__hidden__"
+HIDDEN_GROUP = "???"
 EASTER_EGG_NAME = "liyuu"
 EASTER_EGG_DISPLAY_NAME = "Liyuu"
-EASTER_EGG_TRIGGER_SCORE = 65
+EASTER_EGG_TRIGGER_SCORE = 70
 EASTER_EGG_MESSAGE = "你引起了李嘉的注意"
 BIG_BROTHER_NAME = "立希"
-BIG_BROTHER_TRIGGER_SCORE = 65
+BIG_BROTHER_TRIGGER_SCORE = 70
 BIG_BROTHER_MESSAGE = "老大哥正在看着你"
-EXTRA_GROUP_MEMBERS = {
-    "sumimi": ["佐々木李子"],
-    "millsage": ["薬師寺李有", "千春", "結川あさき", "伊駒ゆりえ", "咲川ひなの"],
-    "dumbrock": ["橘めい", "涼泉桜花", "花宮初奈", "菱川花菜", "遠野ひかる"],
-    "mewtype": ["仲町あられ", "宮永ののか", "峰月律", "藤都子", "千石ユノ"],
-}
-EXTRA_PERSON_BANDS = {
-    "佐々木李子": ["sumimi"],
-}
+DEFAULT_SELECTED_GROUPS = {"bangdream:mygo", "bangdream:avemujica"}
 
 
 @contextmanager
@@ -154,13 +143,14 @@ def read_job_status(job_id):
         return json.load(f)
 
 
-def make_recognition_payload(result, relaxed, thresholds, selected_bands, queue_wait):
+def make_recognition_payload(result, relaxed, det_score_threshold, selected_groups, queue_wait):
     return {
         "faces": [r["name"] for r in result],
         "details": result,
         "mode": "relaxed" if relaxed else "default",
-        "thresholds": thresholds,
-        "bands": sorted(selected_bands),
+        "det_score_threshold": det_score_threshold,
+        "groups": sorted(selected_groups),
+        "bands": sorted(selected_groups),
         "queue_wait": round(queue_wait, 3),
     }
 
@@ -191,7 +181,7 @@ def image_content_type(path):
     return "image/jpeg"
 
 
-def find_avatar_file(name):
+def find_avatar_file(name, project="", group=""):
     safe_name = safe_path_segment(name, "")
     if not safe_name:
         return None
@@ -206,16 +196,44 @@ def find_avatar_file(name):
     faces_base = os.path.join(base_dir, "faces")
     if not os.path.isdir(faces_base):
         return None
-    for band_dir in sorted(os.scandir(faces_base), key=lambda e: e.name):
-        if not band_dir.is_dir():
+    if project:
+        if project == HIDDEN_PROJECT:
+            candidate_dirs = [os.path.join(faces_base, HIDDEN_GROUP, safe_name)]
+        elif group:
+            candidate_dirs = [os.path.join(faces_base, project, group, safe_name)]
+        else:
+            project_dir = os.path.join(faces_base, project)
+            candidate_dirs = [
+                os.path.join(group_dir.path, safe_name)
+                for group_dir in sorted(os.scandir(project_dir), key=lambda e: e.name)
+                if group_dir.is_dir()
+            ] if os.path.isdir(project_dir) else []
+        for faces_dir in candidate_dirs:
+            if not os.path.isdir(faces_dir):
+                continue
+            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                photo = os.path.join(faces_dir, "1" + ext)
+                if os.path.exists(photo):
+                    return photo
+
+    for project_dir in sorted(os.scandir(faces_base), key=lambda e: e.name):
+        if not project_dir.is_dir():
             continue
-        faces_dir = os.path.join(band_dir.path, safe_name)
-        if not os.path.isdir(faces_dir):
-            continue
-        for ext in [".jpg", ".jpeg", ".png", ".webp"]:
-            photo = os.path.join(faces_dir, "1" + ext)
-            if os.path.exists(photo):
-                return photo
+        if project_dir.name == HIDDEN_GROUP:
+            candidate_dirs = [os.path.join(project_dir.path, safe_name)]
+        else:
+            candidate_dirs = [
+                os.path.join(group_dir.path, safe_name)
+                for group_dir in sorted(os.scandir(project_dir.path), key=lambda e: e.name)
+                if group_dir.is_dir()
+            ]
+        for faces_dir in candidate_dirs:
+            if not os.path.isdir(faces_dir):
+                continue
+            for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                photo = os.path.join(faces_dir, "1" + ext)
+                if os.path.exists(photo):
+                    return photo
     return None
 
 
@@ -246,61 +264,43 @@ def directory_size(path):
 
 def load_face_groups():
     base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "faces")
-    groups = {}
-    counts = {}
+    projects = {}
     if not os.path.isdir(base_dir):
-        return groups, counts
-    for band in sorted(os.listdir(base_dir)):
-        band_path = os.path.join(base_dir, band)
-        if (
-            not os.path.isdir(band_path)
-            or band.startswith(".")
-            or band == EASTER_EGG_BAND
-        ):
+        return {"projects": projects}
+    for project in sorted(os.listdir(base_dir)):
+        project_path = os.path.join(base_dir, project)
+        if not os.path.isdir(project_path) or project.startswith(".") or project == HIDDEN_GROUP:
             continue
-        roles = []
-        counts[band] = {}
-        for role in sorted(os.listdir(band_path)):
-            role_path = os.path.join(band_path, role)
-            if os.path.isdir(role_path) and not role.startswith("."):
-                roles.append(role)
-                counts[band][role] = sum(
+
+        group_map = {}
+        count_map = {}
+        for group in sorted(os.listdir(project_path)):
+            group_path = os.path.join(project_path, group)
+            if not os.path.isdir(group_path) or group.startswith("."):
+                continue
+            people = []
+            count_map[group] = {}
+            for person in sorted(os.listdir(group_path)):
+                person_path = os.path.join(group_path, person)
+                if not os.path.isdir(person_path) or person.startswith("."):
+                    continue
+                people.append(person)
+                count_map[group][person] = sum(
                     1
-                    for filename in os.listdir(role_path)
+                    for filename in os.listdir(person_path)
                     if os.path.splitext(filename)[1].lower()
                     in ALLOWED_IMAGE_EXTENSIONS
                 )
-        if roles:
-            groups[band] = roles
-        else:
-            counts.pop(band, None)
-
-    for band, people in EXTRA_GROUP_MEMBERS.items():
-        groups.setdefault(band, [])
-        counts.setdefault(band, {})
-        for name in people:
-            if name not in groups[band]:
-                groups[band].append(name)
-            if name not in counts[band]:
-                count = 0
-                for source_band, source_people in groups.items():
-                    if name not in source_people:
-                        continue
-                    source_dir = os.path.join(base_dir, source_band, name)
-                    if os.path.isdir(source_dir):
-                        count = sum(
-                            1
-                            for filename in os.listdir(source_dir)
-                            if os.path.splitext(filename)[1].lower()
-                            in ALLOWED_IMAGE_EXTENSIONS
-                        )
-                        break
-                counts[band][name] = count
-        groups[band] = sorted(groups[band])
-    return groups, counts
+            if people:
+                group_map[group] = people
+            else:
+                count_map.pop(group, None)
+        if group_map:
+            projects[project] = {"groups": group_map, "counts": count_map}
+    return {"projects": projects}
 
 
-def parse_person_bands(value):
+def parse_values(value):
     if isinstance(value, (list, tuple, set, np.ndarray)):
         raw = value
     else:
@@ -308,22 +308,27 @@ def parse_person_bands(value):
     return {str(b).strip() for b in raw if str(b).strip()}
 
 
-def encode_bands(bands):
-    return ",".join(sorted(dict.fromkeys(b for b in bands if b)))
+def encode_values(values):
+    return ",".join(sorted(dict.fromkeys(v for v in values if v)))
+
+
+def group_key(project, group):
+    return f"{project}:{group}"
+
+
+def parse_selected_groups(value):
+    return {str(v).strip() for v in value.split(",") if str(v).strip()}
+
+
+def is_hidden_entry(project, groups, name):
+    return project == HIDDEN_PROJECT and HIDDEN_GROUP in groups and (
+        name.lower() == EASTER_EGG_NAME.lower() or name == BIG_BROTHER_NAME
+    )
 
 
 def display_score(similarity):
     score = 100 / (1 + np.exp(-8 * (float(similarity) - 0.35)))
     return int(round(max(0, min(99, score))))
-
-
-def infer_name_bands(names):
-    groups, _ = load_face_groups()
-    by_name = {}
-    for band, people in groups.items():
-        for name in people:
-            by_name.setdefault(name, set()).add(band)
-    return [encode_bands(by_name.get(name, set())) for name in names]
 
 
 def admin_create_token():
@@ -474,29 +479,36 @@ def admin_list_faces_upload():
     result = {}
     if not os.path.isdir(FACES_UPLOAD_DIR):
         return result
-    for band in sorted(os.listdir(FACES_UPLOAD_DIR)):
-        band_path = os.path.join(FACES_UPLOAD_DIR, band)
-        if not os.path.isdir(band_path) or band.startswith("."):
+    for project in sorted(os.listdir(FACES_UPLOAD_DIR)):
+        project_path = os.path.join(FACES_UPLOAD_DIR, project)
+        if not os.path.isdir(project_path) or project.startswith("."):
             continue
-        roles = {}
-        for role in sorted(os.listdir(band_path)):
-            role_path = os.path.join(band_path, role)
-            if not os.path.isdir(role_path) or role.startswith("."):
+        groups = {}
+        for group in sorted(os.listdir(project_path)):
+            group_path = os.path.join(project_path, group)
+            if not os.path.isdir(group_path) or group.startswith("."):
                 continue
-            files = []
-            for fn in sorted(os.listdir(role_path)):
-                if fn.startswith("."):
+            roles = {}
+            for role in sorted(os.listdir(group_path)):
+                role_path = os.path.join(group_path, role)
+                if not os.path.isdir(role_path) or role.startswith("."):
                     continue
-                fp = os.path.join(role_path, fn)
-                try:
-                    size = os.path.getsize(fp)
-                except OSError:
-                    size = 0
-                files.append({"filename": fn, "size": size})
-            if files:
-                roles[role] = files
-        if roles:
-            result[band] = roles
+                files = []
+                for fn in sorted(os.listdir(role_path)):
+                    if fn.startswith("."):
+                        continue
+                    fp = os.path.join(role_path, fn)
+                    try:
+                        size = os.path.getsize(fp)
+                    except OSError:
+                        size = 0
+                    files.append({"filename": fn, "size": size})
+                if files:
+                    roles[role] = files
+            if roles:
+                groups[group] = roles
+        if groups:
+            result[project] = groups
     return result
 
 
@@ -554,54 +566,10 @@ def admin_stats():
 ADMIN_HTML_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "admin.html")
 
 
-def normalize_feature_bands(names, bands):
-    normalized = []
-    for name, band_value in zip(names, bands):
-        band_set = parse_person_bands(band_value)
-        band_set.update(EXTRA_PERSON_BANDS.get(name, []))
-        normalized.append(encode_bands(band_set))
-    return normalized
-
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "AdaFace"))
-import net as adaface_net
-from face_alignment.mtcnn import MTCNN
-
 FEATURES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "features.npz")
-MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "AdaFace/pretrained/adaface_ir50_ms1mv2.ckpt",
-)
 INSIGHTFACE_DET_SIZE = int(os.environ.get("INSIGHTFACE_DET_SIZE", "640"))
 INSIGHTFACE_DEFAULT_DET_SCORE = float(os.environ.get("INSIGHTFACE_DEFAULT_DET_SCORE", "0.5"))
 INSIGHTFACE_RELAXED_DET_SCORE = float(os.environ.get("INSIGHTFACE_RELAXED_DET_SCORE", "0.3"))
-
-
-def load_adaface():
-    model = adaface_net.build_model("ir_50")
-    statedict = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)[
-        "state_dict"
-    ]
-    model.load_state_dict(
-        {k[6:]: v for k, v in statedict.items() if k.startswith("model.")}
-    )
-    model.eval()
-    return model
-
-
-def load_mtcnn():
-    m = MTCNN(device="cpu", crop_size=(112, 112))
-    m.min_face_size = 12
-    m.thresholds = DEFAULT_MTCNN_THRESHOLDS
-    return m
-
-
-def adaface_infer(model, face_aligned):
-    bgr = ((face_aligned[:, :, ::-1] / 255.0) - 0.5) / 0.5
-    tensor = torch.tensor(np.array([bgr.transpose(2, 0, 1)])).float()
-    with torch.inference_mode():
-        feature, _ = model(tensor)
-    return feature[0].numpy()
 
 
 def resize_for_recognition(img):
@@ -621,15 +589,30 @@ def load_insightface():
     return app
 
 
+def result_entry(name, project, groups, similarity):
+    return {
+                "name": name,
+                "project": project,
+                "projects": [project] if project != HIDDEN_PROJECT else [],
+                "group": encode_values(groups),
+                "groups": sorted(groups),
+        "band": encode_values(groups),
+        "bands": sorted(groups),
+        "similarity": round(float(similarity), 4),
+        "display_score": display_score(similarity),
+    }
+
+
 def recognize_insightface(
     insightface_app,
     names,
-    bands,
+    projects,
+    groups,
     feature_db,
     feature_norms,
     image_bytes,
     det_score_threshold,
-    selected_bands,
+    selected_groups,
 ):
     nparr = np.frombuffer(image_bytes, np.uint8)
     img_raw = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -639,100 +622,90 @@ def recognize_insightface(
     detected_faces = insightface_app.get(img_raw)
     detected_faces = [f for f in detected_faces if f.det_score >= det_score_threshold]
 
-    results = []
-    person_band_sets = [parse_person_bands(band) for band in bands]
-    band_mask = np.array(
-        [bool(person_bands & selected_bands) for person_bands in person_band_sets],
-        dtype=bool,
-    )
-    easter_egg_indices = [
-        idx
-        for idx, name in enumerate(names)
-        if EASTER_EGG_BAND in person_band_sets[idx]
-        and (name.lower() == EASTER_EGG_NAME.lower() or name == BIG_BROTHER_NAME)
+    group_sets = [parse_values(group_value) for group_value in groups]
+    entry_group_keys = [
+        {group_key(project, group) for group in group_set}
+        for project, group_set in zip(projects, group_sets)
     ]
-    for idx in easter_egg_indices:
-        band_mask[idx] = True
-    if not np.any(band_mask):
+    mask_values = []
+    for name, project, group_set, keys in zip(names, projects, group_sets, entry_group_keys):
+        keep = bool(keys & selected_groups)
+        if is_hidden_entry(project, group_set, name):
+            keep = True
+        mask_values.append(keep)
+    entry_mask = np.array(mask_values, dtype=bool)
+    if not np.any(entry_mask):
         return []
-    filtered_names = [name for name, keep in zip(names, band_mask) if keep]
-    filtered_band_sets = [
-        person_bands for person_bands, keep in zip(person_band_sets, band_mask) if keep
-    ]
-    filtered_features = feature_db[band_mask]
-    filtered_norms = feature_norms[band_mask]
+
+    filtered_names = [name for name, keep in zip(names, entry_mask) if keep]
+    filtered_projects = [project for project, keep in zip(projects, entry_mask) if keep]
+    filtered_group_sets = [group_set for group_set, keep in zip(group_sets, entry_mask) if keep]
+    filtered_features = feature_db[entry_mask]
+    filtered_norms = feature_norms[entry_mask]
     img_h, img_w = img_raw.shape[:2]
+
+    results = []
     for face in detected_faces:
         vec = face.normed_embedding
         vec_norm = np.linalg.norm(vec)
         if vec_norm == 0:
             continue
         cos_results = filtered_features @ vec / (filtered_norms * vec_norm)
-        easter_egg_filtered_idx = next(
+
+        easter_egg_idx = next(
             (
                 idx
                 for idx, name in enumerate(filtered_names)
                 if name.lower() == EASTER_EGG_NAME.lower()
-                and EASTER_EGG_BAND in filtered_band_sets[idx]
+                and is_hidden_entry(filtered_projects[idx], filtered_group_sets[idx], name)
             ),
             None,
         )
-        big_brother_filtered_idx = next(
+        big_brother_idx = next(
             (
                 idx
                 for idx, name in enumerate(filtered_names)
                 if name == BIG_BROTHER_NAME
-                and EASTER_EGG_BAND in filtered_band_sets[idx]
+                and is_hidden_entry(filtered_projects[idx], filtered_group_sets[idx], name)
             ),
             None,
         )
-        hidden_indices = {
-            idx
-            for idx in (easter_egg_filtered_idx, big_brother_filtered_idx)
-            if idx is not None
-        }
+        hidden_indices = {idx for idx in (easter_egg_idx, big_brother_idx) if idx is not None}
         raw_max_idx = int(np.argmax(cos_results))
-        visible_indices = [
-            idx for idx in range(len(cos_results)) if idx not in hidden_indices
-        ]
-        if not visible_indices and raw_max_idx not in hidden_indices:
-            visible_indices = [raw_max_idx]
+        visible_indices = [idx for idx in range(len(cos_results)) if idx not in hidden_indices]
         if not visible_indices:
             continue
+
         max_idx = max(visible_indices, key=lambda idx: cos_results[idx])
+        easter_egg_triggered = ""
         if (
-            big_brother_filtered_idx is not None
-            and big_brother_filtered_idx == raw_max_idx
-            and display_score(cos_results[big_brother_filtered_idx])
-            >= BIG_BROTHER_TRIGGER_SCORE
+            big_brother_idx is not None
+            and big_brother_idx == raw_max_idx
+            and display_score(cos_results[big_brother_idx]) >= BIG_BROTHER_TRIGGER_SCORE
         ):
-            max_idx = big_brother_filtered_idx
+            max_idx = big_brother_idx
             easter_egg_triggered = "big_brother"
         elif (
-            easter_egg_filtered_idx is not None
-            and easter_egg_filtered_idx == raw_max_idx
-            and display_score(cos_results[easter_egg_filtered_idx])
-            >= EASTER_EGG_TRIGGER_SCORE
+            easter_egg_idx is not None
+            and easter_egg_idx == raw_max_idx
+            and display_score(cos_results[easter_egg_idx]) >= EASTER_EGG_TRIGGER_SCORE
         ):
-            max_idx = easter_egg_filtered_idx
+            max_idx = easter_egg_idx
             easter_egg_triggered = "liyuu"
-        else:
-            easter_egg_triggered = ""
+
         top_indices = [
-            idx
-            for idx in np.argsort(cos_results)[::-1]
-            if idx not in hidden_indices
+            idx for idx in np.argsort(cos_results)[::-1] if idx not in hidden_indices
         ][:5]
         top5 = [
-            {
-                "name": filtered_names[idx],
-                "band": encode_bands(filtered_band_sets[idx]),
-                "bands": sorted(filtered_band_sets[idx]),
-                "similarity": round(float(cos_results[idx]), 4),
-                "display_score": display_score(cos_results[idx]),
-            }
+            result_entry(
+                filtered_names[idx],
+                filtered_projects[idx],
+                filtered_group_sets[idx],
+                cos_results[idx],
+            )
             for idx in top_indices
         ]
+
         bbox = None
         box = face.bbox
         if box is not None:
@@ -742,18 +715,20 @@ def recognize_insightface(
                 float(box[2]) / img_w,
                 float(box[3]) / img_h,
             ]
-        results.append(
+
+        result = result_entry(
+            EASTER_EGG_DISPLAY_NAME if easter_egg_triggered == "liyuu" else filtered_names[max_idx],
+            filtered_projects[max_idx],
+            filtered_group_sets[max_idx],
+            cos_results[max_idx],
+        )
+        result.update(
             {
-                "name": (
-                    EASTER_EGG_DISPLAY_NAME
-                    if easter_egg_triggered == "liyuu"
-                    else filtered_names[max_idx]
-                ),
                 "avatar_name": filtered_names[max_idx],
-                "band": encode_bands(filtered_band_sets[max_idx]),
-                "bands": sorted(filtered_band_sets[max_idx]),
-                "similarity": round(float(cos_results[max_idx]), 4),
-                "display_score": display_score(cos_results[max_idx]),
+                "avatar_project": filtered_projects[max_idx],
+                "avatar_group": sorted(filtered_group_sets[max_idx])[0]
+                if filtered_group_sets[max_idx]
+                else "",
                 "top5": [] if easter_egg_triggered else top5,
                 "easter_egg": easter_egg_triggered,
                 "easter_egg_message": (
@@ -766,207 +741,35 @@ def recognize_insightface(
                 "bbox": bbox,
             }
         )
-    return results
-
-
-def recognize(
-    mtcnn,
-    adaface,
-    names,
-    bands,
-    feature_db,
-    feature_norms,
-    image_bytes,
-    thresholds,
-    selected_bands,
-):
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img_raw = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img_raw is None:
-        return []
-    img_raw = resize_for_recognition(img_raw)
-    pil_img = Image.fromarray(cv2.cvtColor(img_raw, cv2.COLOR_BGR2RGB))
-    original_thresholds = list(mtcnn.thresholds)
-    mtcnn.thresholds = thresholds
-    try:
-        boxes, aligned_faces = mtcnn.align_multi(pil_img)
-    finally:
-        mtcnn.thresholds = original_thresholds
-
-    results = []
-    person_band_sets = [parse_person_bands(band) for band in bands]
-    band_mask = np.array(
-        [bool(person_bands & selected_bands) for person_bands in person_band_sets],
-        dtype=bool,
-    )
-    easter_egg_indices = [
-        idx
-        for idx, name in enumerate(names)
-        if EASTER_EGG_BAND in person_band_sets[idx]
-        and (name.lower() == EASTER_EGG_NAME.lower() or name == BIG_BROTHER_NAME)
-    ]
-    for idx in easter_egg_indices:
-        band_mask[idx] = True
-    if not np.any(band_mask):
-        return []
-    filtered_names = [name for name, keep in zip(names, band_mask) if keep]
-    filtered_band_sets = [
-        person_bands for person_bands, keep in zip(person_band_sets, band_mask) if keep
-    ]
-    filtered_features = feature_db[band_mask]
-    filtered_norms = feature_norms[band_mask]
-    img_w, img_h = pil_img.size
-    has_boxes = isinstance(boxes, np.ndarray) and len(boxes) == len(aligned_faces)
-    for i, face_pil in enumerate(aligned_faces):
-        vec = adaface_infer(adaface, np.array(face_pil))
-        vec_norm = np.linalg.norm(vec)
-        if vec_norm == 0:
-            continue
-        cos_results = filtered_features @ vec / (filtered_norms * vec_norm)
-        easter_egg_filtered_idx = next(
-            (
-                idx
-                for idx, name in enumerate(filtered_names)
-                if name.lower() == EASTER_EGG_NAME.lower()
-                and EASTER_EGG_BAND in filtered_band_sets[idx]
-            ),
-            None,
-        )
-        big_brother_filtered_idx = next(
-            (
-                idx
-                for idx, name in enumerate(filtered_names)
-                if name == BIG_BROTHER_NAME
-                and EASTER_EGG_BAND in filtered_band_sets[idx]
-            ),
-            None,
-        )
-        hidden_indices = {
-            idx
-            for idx in (easter_egg_filtered_idx, big_brother_filtered_idx)
-            if idx is not None
-        }
-        raw_max_idx = int(np.argmax(cos_results))
-        visible_indices = [
-            idx for idx in range(len(cos_results)) if idx not in hidden_indices
-        ]
-        if not visible_indices and raw_max_idx not in hidden_indices:
-            visible_indices = [raw_max_idx]
-        if not visible_indices:
-            continue
-        max_idx = max(visible_indices, key=lambda idx: cos_results[idx])
-        if (
-            big_brother_filtered_idx is not None
-            and big_brother_filtered_idx == raw_max_idx
-            and display_score(cos_results[big_brother_filtered_idx])
-            >= BIG_BROTHER_TRIGGER_SCORE
-        ):
-            max_idx = big_brother_filtered_idx
-            easter_egg_triggered = "big_brother"
-        elif (
-            easter_egg_filtered_idx is not None
-            and easter_egg_filtered_idx == raw_max_idx
-            and display_score(cos_results[easter_egg_filtered_idx])
-            >= EASTER_EGG_TRIGGER_SCORE
-        ):
-            max_idx = easter_egg_filtered_idx
-            easter_egg_triggered = "liyuu"
-        else:
-            easter_egg_triggered = ""
-        top_indices = [
-            idx
-            for idx in np.argsort(cos_results)[::-1]
-            if idx not in hidden_indices
-        ][:5]
-        top5 = [
-            {
-                "name": filtered_names[idx],
-                "band": encode_bands(filtered_band_sets[idx]),
-                "bands": sorted(filtered_band_sets[idx]),
-                "similarity": round(float(cos_results[idx]), 4),
-                "display_score": display_score(cos_results[idx]),
-            }
-            for idx in top_indices
-        ]
-        box = boxes[i] if has_boxes else None
-        bbox = None
-        if box is not None:
-            bbox = [
-                float(box[0]) / img_w,
-                float(box[1]) / img_h,
-                float(box[2]) / img_w,
-                float(box[3]) / img_h,
-            ]
-        results.append(
-            {
-                "name": (
-                    EASTER_EGG_DISPLAY_NAME
-                    if easter_egg_triggered == "liyuu"
-                    else filtered_names[max_idx]
-                ),
-                "avatar_name": filtered_names[max_idx],
-                "band": encode_bands(filtered_band_sets[max_idx]),
-                "bands": sorted(filtered_band_sets[max_idx]),
-                "similarity": round(float(cos_results[max_idx]), 4),
-                "display_score": display_score(cos_results[max_idx]),
-                "top5": [] if easter_egg_triggered else top5,
-                "easter_egg": easter_egg_triggered,
-                "easter_egg_message": (
-                    EASTER_EGG_MESSAGE
-                    if easter_egg_triggered == "liyuu"
-                    else BIG_BROTHER_MESSAGE
-                    if easter_egg_triggered == "big_brother"
-                    else ""
-                ),
-                "bbox": bbox,
-            }
-        )
+        results.append(result)
     return results
 
 
 class FaceHandler(BaseHTTPRequestHandler):
-    mtcnn = None
-    adaface = None
     insightface_app = None
-    backend = "insightface"
     names = None
-    bands = None
+    projects = None
+    groups = None
     feature_db = None
     feature_norms = None
 
     @classmethod
-    def process_recognition(cls, body, thresholds, selected_bands, relaxed, queue_wait):
+    def process_recognition(cls, body, det_score_threshold, selected_groups, relaxed, queue_wait):
         now = time.localtime()
         day = daily_key(now)
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", now)
         with recognition_lock:
-            if cls.backend == "insightface":
-                det_score_threshold = (
-                    INSIGHTFACE_RELAXED_DET_SCORE if relaxed
-                    else INSIGHTFACE_DEFAULT_DET_SCORE
-                )
-                result = recognize_insightface(
-                    cls.insightface_app,
-                    cls.names,
-                    cls.bands,
-                    cls.feature_db,
-                    cls.feature_norms,
-                    body,
-                    det_score_threshold,
-                    selected_bands,
-                )
-            else:
-                result = recognize(
-                    cls.mtcnn,
-                    cls.adaface,
-                    cls.names,
-                    cls.bands,
-                    cls.feature_db,
-                    cls.feature_norms,
-                    body,
-                    thresholds,
-                    selected_bands,
-                )
+            result = recognize_insightface(
+                cls.insightface_app,
+                cls.names,
+                cls.projects,
+                cls.groups,
+                cls.feature_db,
+                cls.feature_norms,
+                body,
+                det_score_threshold,
+                selected_groups,
+            )
         photo_name = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.jpg"
         photo_dir = daily_upload_dir(day)
         os.makedirs(photo_dir, exist_ok=True)
@@ -982,7 +785,8 @@ class FaceHandler(BaseHTTPRequestHandler):
                         "photo": photo_relpath,
                         "faces": result,
                         "mode": "relaxed" if relaxed else "default",
-                        "bands": sorted(selected_bands),
+                        "groups": sorted(selected_groups),
+                        "bands": sorted(selected_groups),
                         "time": timestamp,
                     },
                     day,
@@ -990,7 +794,7 @@ class FaceHandler(BaseHTTPRequestHandler):
             else:
                 print(f"[server] failed to save upload photo: {photo_path}", flush=True)
         return make_recognition_payload(
-            result, relaxed, thresholds, selected_bands, queue_wait
+            result, relaxed, det_score_threshold, selected_groups, queue_wait
         )
 
     def send_json(self, status, payload):
@@ -1053,8 +857,9 @@ class FaceHandler(BaseHTTPRequestHandler):
             + body
         )
 
-        band_value = ""
-        role_value = ""
+        project_value = ""
+        group_value = ""
+        name_value = ""
         photos = []
         for part in message.iter_parts():
             if part.get_content_disposition() != "form-data":
@@ -1062,15 +867,18 @@ class FaceHandler(BaseHTTPRequestHandler):
             name = part.get_param("name", header="content-disposition")
             filename = part.get_param("filename", header="content-disposition")
             payload = part.get_payload(decode=True) or b""
-            if name == "band":
-                band_value = payload.decode(part.get_content_charset() or "utf-8", "replace")
+            if name == "project":
+                project_value = payload.decode(part.get_content_charset() or "utf-8", "replace")
+            elif name == "group":
+                group_value = payload.decode(part.get_content_charset() or "utf-8", "replace")
             elif name == "role":
-                role_value = payload.decode(part.get_content_charset() or "utf-8", "replace")
+                name_value = payload.decode(part.get_content_charset() or "utf-8", "replace")
             elif name == "photos" and filename:
                 photos.append((filename, payload))
 
-        band = safe_path_segment(band_value, "unknown_band")
-        role = safe_path_segment(role_value, "unknown_role")
+        project = safe_path_segment(project_value, "unknown_project")
+        group = safe_path_segment(group_value, "unknown_group")
+        role = safe_path_segment(name_value, "unknown_role")
         incoming_size = sum(len(payload) for _, payload in photos)
         used_size = directory_size(FACES_UPLOAD_DIR)
         if used_size + incoming_size > MAX_FACE_UPLOAD_TOTAL_BYTES:
@@ -1085,7 +893,7 @@ class FaceHandler(BaseHTTPRequestHandler):
             return
 
         saved = []
-        target_dir = os.path.join(FACES_UPLOAD_DIR, band, role)
+        target_dir = os.path.join(FACES_UPLOAD_DIR, project, group, role)
         os.makedirs(target_dir, exist_ok=True)
         for filename, payload in photos:
             if not payload:
@@ -1114,10 +922,10 @@ class FaceHandler(BaseHTTPRequestHandler):
             return
 
         print(
-            f"[server] face upload band={band} role={role} files={len(saved)} bytes={content_length}",
+            f"[server] face upload project={project} group={group} role={role} files={len(saved)} bytes={content_length}",
             flush=True,
         )
-        self.send_json(200, {"saved": saved, "band": band, "role": role})
+        self.send_json(200, {"saved": saved, "project": project, "group": group, "role": role})
 
     def handle_feedback_upload(self, content_length):
         if content_length <= 0:
@@ -1263,8 +1071,16 @@ class FaceHandler(BaseHTTPRequestHandler):
                 ct = "image/webp"
             self.send_static_file(abs_path, ct)
         elif path.startswith("/avatar/"):
-            name = urllib.parse.unquote(self.path[len("/avatar/"):])
-            photo = find_avatar_file(name)
+            parts = [
+                urllib.parse.unquote(part)
+                for part in path[len("/avatar/"):].split("/")
+                if part
+            ]
+            if len(parts) >= 3:
+                project, group, name = parts[0], parts[1], "/".join(parts[2:])
+            else:
+                project, group, name = "", "", "/".join(parts)
+            photo = find_avatar_file(name, project, group)
             if photo:
                 self.send_static_file(photo, image_content_type(photo))
                 return
@@ -1288,8 +1104,7 @@ class FaceHandler(BaseHTTPRequestHandler):
         elif self.path == "/people":
             self.send_json(200, {"names": self.names})
         elif self.path == "/face_groups":
-            groups, counts = load_face_groups()
-            self.send_json(200, {"groups": groups, "counts": counts})
+            self.send_json(200, load_face_groups())
         elif self.path == "/health":
             self.send_json(200, {"ok": True, "people": len(self.names or [])})
         else:
@@ -1346,13 +1161,11 @@ class FaceHandler(BaseHTTPRequestHandler):
 
         params = urllib.parse.parse_qs(parsed_path.query)
         relaxed = params.get("mode", [""])[0] == "relaxed"
-        requested_bands = [
-            safe_path_segment(band, "")
-            for band in params.get("bands", [""])[0].split(",")
-            if band.strip()
-        ]
-        selected_bands = set(requested_bands or ["mygo", "avemujica"])
-        thresholds = LOW_MTCNN_THRESHOLDS if relaxed else DEFAULT_MTCNN_THRESHOLDS
+        requested_groups = parse_selected_groups(params.get("groups", [""])[0])
+        selected_groups = requested_groups or set(DEFAULT_SELECTED_GROUPS)
+        det_score_threshold = (
+            INSIGHTFACE_RELAXED_DET_SCORE if relaxed else INSIGHTFACE_DEFAULT_DET_SCORE
+        )
         if content_length <= 0:
             self.send_json(400, {"error": "empty image"})
             return
@@ -1370,7 +1183,8 @@ class FaceHandler(BaseHTTPRequestHandler):
                     "created_at": now,
                     "updated_at": now,
                     "mode": "relaxed" if relaxed else "default",
-                    "bands": sorted(selected_bands),
+                    "groups": sorted(selected_groups),
+                    "bands": sorted(selected_groups),
                     "worker_pid": os.getpid(),
                 },
             )
@@ -1379,8 +1193,8 @@ class FaceHandler(BaseHTTPRequestHandler):
                     {
                         "job_id": job_id,
                         "body": body,
-                        "thresholds": thresholds,
-                        "selected_bands": selected_bands,
+                        "det_score_threshold": det_score_threshold,
+                        "selected_groups": selected_groups,
                         "relaxed": relaxed,
                         "content_length": content_length,
                         "queued_at": time.time(),
@@ -1415,12 +1229,12 @@ class FaceHandler(BaseHTTPRequestHandler):
 
         try:
             payload = self.process_recognition(
-                body, thresholds, selected_bands, relaxed, queue_wait
+                body, det_score_threshold, selected_groups, relaxed, queue_wait
             )
             self.send_json(200, payload)
             elapsed = time.time() - started
             print(
-                f"[server] POST {content_length} bytes mode={'relaxed' if relaxed else 'default'} bands={','.join(sorted(selected_bands))} wait={queue_wait:.2f}s -> {len(payload['faces'])} faces in {elapsed:.2f}s",
+                f"[server] POST {content_length} bytes mode={'relaxed' if relaxed else 'default'} groups={','.join(sorted(selected_groups))} wait={queue_wait:.2f}s -> {len(payload['faces'])} faces in {elapsed:.2f}s",
                 flush=True,
             )
         except Exception as e:
@@ -1451,8 +1265,8 @@ def recognition_job_worker():
             )
             payload = FaceHandler.process_recognition(
                 job["body"],
-                job["thresholds"],
-                job["selected_bands"],
+                job["det_score_threshold"],
+                job["selected_groups"],
                 job["relaxed"],
                 queue_wait,
             )
@@ -1491,36 +1305,27 @@ def main():
     parser.add_argument("--port", type=int, default=3724)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("-f", "--features", default=FEATURES_FILE)
-    parser.add_argument("--backend", choices=["insightface", "adaface"], default="insightface")
     args = parser.parse_args()
 
-    if args.backend == "insightface":
-        print("Loading InsightFace buffalo_l...")
-        insightface_app = load_insightface()
-        FaceHandler.insightface_app = insightface_app
-        FaceHandler.backend = "insightface"
-    else:
-        print("Loading MTCNN...")
-        mtcnn = load_mtcnn()
-        print("Loading AdaFace...")
-        adaface = load_adaface()
-        FaceHandler.mtcnn = mtcnn
-        FaceHandler.adaface = adaface
-        FaceHandler.backend = "adaface"
+    print("Loading InsightFace buffalo_l...")
+    FaceHandler.insightface_app = load_insightface()
 
     print(f"Loading features from {args.features}...")
     data = np.load(args.features, allow_pickle=True)
+    required_keys = {"names", "projects", "groups", "features"}
+    if not required_keys.issubset(set(data.files)):
+        print("Error: features.npz uses the old schema; run python3 register.py first")
+        sys.exit(1)
     names = [str(n) for n in data["names"]]
-    if "bands" in data:
-        bands = normalize_feature_bands(names, [str(b) for b in data["bands"]])
-    else:
-        bands = infer_name_bands(names)
+    projects = [str(p) for p in data["projects"]]
+    groups = [str(g) for g in data["groups"]]
     feature_db = data["features"]
     feature_norms = np.linalg.norm(feature_db, axis=1)
     print(f"Loaded {len(names)} people, feature dim: {feature_db.shape[1]}")
 
     FaceHandler.names = names
-    FaceHandler.bands = bands
+    FaceHandler.projects = projects
+    FaceHandler.groups = groups
     FaceHandler.feature_db = feature_db
     FaceHandler.feature_norms = feature_norms
 

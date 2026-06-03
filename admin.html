@@ -806,22 +806,26 @@
         function loadFaces() {
             api('/admin/api/faces_upload').then(d => {
                 const data = d.data || {};
-                const bands = Object.keys(data);
-                if (!bands.length) { $('#facesContent').innerHTML = '<div class="empty-state">暂无数据集上传</div>'; return }
+                const projects = Object.keys(data);
+                if (!projects.length) { $('#facesContent').innerHTML = '<div class="empty-state">暂无数据集上传</div>'; return }
                 let html = '';
-                bands.forEach(band => {
-                    const roles = data[band];
-                    html += `<div style="margin-bottom:24px"><h3 style="font-size:15px;margin-bottom:10px;color:#aaa;font-weight:600">${band}</h3>`;
-                    Object.entries(roles).forEach(([role, files]) => {
-                        html += `<div style="margin-bottom:12px"><div style="color:#aaa;font-size:13px;margin-bottom:6px">${role} (${files.length}张)</div><div class="photo-grid">`;
-                        files.forEach(f => {
-                            const src = '/admin/faces_upload_photo/' + encodeURIComponent(band) + '/' + encodeURIComponent(role) + '/' + encodeURIComponent(f.filename);
-                            html += `<div class="photo-item" onclick="openFaceDetail('${src}')">
+                projects.forEach(project => {
+                    const groups = data[project];
+                    html += `<div style="margin-bottom:24px"><h3 style="font-size:15px;margin-bottom:10px;color:#aaa;font-weight:600">${project}</h3>`;
+                    Object.entries(groups).forEach(([group, roles]) => {
+                        html += `<div style="margin-bottom:14px"><div style="color:#aaa;font-size:13px;margin-bottom:6px">${group}</div>`;
+                        Object.entries(roles).forEach(([role, files]) => {
+                            html += `<div style="margin-bottom:12px"><div style="color:#777;font-size:12px;margin-bottom:6px">${role} (${files.length}张)</div><div class="photo-grid">`;
+                            files.forEach(f => {
+                                const src = '/admin/faces_upload_photo/' + encodeURIComponent(project) + '/' + encodeURIComponent(group) + '/' + encodeURIComponent(role) + '/' + encodeURIComponent(f.filename);
+                                html += `<div class="photo-item" onclick="openFaceDetail('${src}')">
             <img src="${src}" loading="lazy" alt="">
             <div class="photo-info">${fmtSize(f.size)}</div>
           </div>`;
+                            });
+                            html += '</div></div>';
                         });
-                        html += '</div></div>';
+                        html += '</div>';
                     });
                     html += '</div>';
                 });

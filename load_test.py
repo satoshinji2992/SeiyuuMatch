@@ -123,7 +123,7 @@ def main():
     parser.add_argument("--requests", type=int, default=20)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=60)
-    parser.add_argument("--bands", default="mygo,avemujica,sumimi")
+    parser.add_argument("--groups", default="bangdream:mygo,bangdream:avemujica")
     parser.add_argument("--relaxed", action="store_true")
     args = parser.parse_args()
 
@@ -131,7 +131,7 @@ def main():
     if not image_path or not image_path.exists():
         raise SystemExit("No sample image found. Pass --image path/to/photo.jpg")
 
-    params = {"bands": args.bands}
+    params = {"groups": args.groups}
     if args.relaxed:
         params["mode"] = "relaxed"
     url = args.url

@@ -965,22 +965,22 @@
         let lastUploadBuffer = null;
         let bandRoles = {};
         let datasetCounts = {};
-        const defaultRecognitionBands = ['mygo', 'avemujica', 'sumimi'];
+        const defaultRecognitionBands = ['bangdream:mygo', 'bangdream:avemujica'];
         const pageScaleKey = 'seiyuumatchPageScale';
         const bandOrder = [
-            'ppp',
-            'roselia',
-            'afterglow',
-            'pastel',
-            'hhw',
-            'ras',
-            'morfonica',
-            'mygo',
-            'sumimi',
-            'avemujica',
-            'mewtype',
-            'millsage',
-            'dumbrock'
+            'bangdream:ppp',
+            'bangdream:roselia',
+            'bangdream:afterglow',
+            'bangdream:pastel',
+            'bangdream:hhw',
+            'bangdream:ras',
+            'bangdream:morfonica',
+            'bangdream:mygo',
+            'bangdream:sumimi',
+            'bangdream:avemujica',
+            'bangdream:mewtype',
+            'bangdream:millsage',
+            'bangdream:dumbrock'
         ];
         const bandIconNames = new Set([
             'afterglow',
@@ -999,9 +999,19 @@
         ]);
 
         function orderedBands() {
-            const known = bandOrder.filter(band => Object.prototype.hasOwnProperty.call(bandRoles, band));
-            const extra = Object.keys(bandRoles).filter(band => !bandOrder.includes(band)).sort();
+            const known = bandOrder.filter(groupKey => Object.prototype.hasOwnProperty.call(bandRoles, groupKey));
+            const extra = Object.keys(bandRoles).filter(groupKey => !bandOrder.includes(groupKey)).sort();
             return [...known, ...extra];
+        }
+
+        function splitGroupKey(groupKey) {
+            const parts = String(groupKey || '').split(':');
+            return { project: parts[0] || '', group: parts.slice(1).join(':') || parts[0] || '' };
+        }
+
+        function groupLabel(groupKey) {
+            const parsed = splitGroupKey(groupKey);
+            return parsed.project ? `${parsed.project}/${parsed.group}` : parsed.group;
         }
 
         function unlockPrivacyNotice() {
@@ -1029,7 +1039,7 @@
         function populateBands() {
             const bands = orderedBands();
             bandSelect.innerHTML = bands
-                .map(band => `<option value="${band}">${band}</option>`)
+                .map(band => `<option value="${band}">${groupLabel(band)}</option>`)
                 .join('');
             populateRoles();
             populateRecognitionBands();
@@ -1057,7 +1067,7 @@
             countTablePopover.innerHTML = `
     <table>
       <caption>全部数据集照片数量</caption>
-      <thead><tr>${bands.map(band => `<th title="${band}">${renderBandIcon(band, 'count')}</th>`).join('')}</tr></thead>
+      <thead><tr>${bands.map(band => `<th title="${groupLabel(band)}">${renderBandIcon(band, 'count')}</th>`).join('')}</tr></thead>
       <tbody>
         ${Array.from({ length: maxRows }, (_, rowIndex) => `
           <tr>
@@ -1078,18 +1088,21 @@
             return fetch('/face_groups')
                 .then(r => r.json())
                 .then(data => {
-                    bandRoles = data.groups || {};
-                    datasetCounts = data.counts || {};
+                    bandRoles = {};
+                    datasetCounts = {};
+                    Object.entries(data.projects || {}).forEach(([project, payload]) => {
+                        Object.entries(payload.groups || {}).forEach(([group, roles]) => {
+                            const key = `${project}:${group}`;
+                            bandRoles[key] = roles;
+                            datasetCounts[key] = (payload.counts || {})[group] || {};
+                        });
+                    });
                     populateBands();
                 })
                 .catch(() => {
                     bandRoles = {
-                        mygo: ['小日向美香', '林鼓子', '立石凛', '羊宮妃那', '青木陽菜'],
-                        avemujica: ['佐々木李子', '渡瀬結月', '米澤茜', '岡田夢以', '高尾奏音'],
-                        sumimi: ['佐々木李子', '反田葉月'],
-                        millsage: ['薬師寺李有', '千春', '結川あさき', '伊駒ゆりえ', '咲川ひなの'],
-                        dumbrock: ['橘めい', '涼泉桜花', '花宮初奈', '菱川花菜', '遠野ひかる'],
-                        mewtype: ['仲町あられ', '宮永ののか', '峰月律', '藤都子', '千石ユノ'],
+                        'bangdream:mygo': ['小日向美香', '林鼓子', '立石凛', '羊宮妃那', '青木陽菜'],
+                        'bangdream:avemujica': ['佐々木李子', '渡瀬結月', '米澤茜', '岡田夢以', '高尾奏音'],
                     };
                     datasetCounts = {};
                     populateBands();
@@ -1097,13 +1110,15 @@
         }
 
         function renderBandIcon(band, variant = 'filter') {
-            const encoded = encodeURIComponent(band);
-            if (!bandIconNames.has(band)) {
+            const parsed = splitGroupKey(band);
+            const iconName = parsed.project === 'bangdream' ? parsed.group : band;
+            const encoded = encodeURIComponent(iconName);
+            if (!bandIconNames.has(iconName)) {
                 const className = variant === 'count' ? 'count-band-fallback' : 'band-logo-fallback';
-                return `<span class="${className}" title="${band}">${band}</span>`;
+                return `<span class="${className}" title="${groupLabel(band)}">${groupLabel(band)}</span>`;
             }
             const className = variant === 'count' ? 'count-band-logo' : 'band-logo';
-            return `<img class="${className}" src="/icon/${encoded}" alt="${band}" title="${band}">`;
+            return `<img class="${className}" src="/icon/${encoded}" alt="${groupLabel(band)}" title="${groupLabel(band)}">`;
         }
 
         function populateRecognitionBands() {
@@ -1112,9 +1127,9 @@
                 const checked = defaultRecognitionBands.includes(band) ? 'checked' : '';
                 const recommended = defaultRecognitionBands.includes(band) ? ' recommended' : '';
                 return `
-      <label class="band-option${recommended}" title="${band}">
+      <label class="band-option${recommended}" title="${groupLabel(band)}">
         <input type="checkbox" name="recognitionBand" value="${band}" ${checked}>
-        <span class="band-option-name">${band}</span>
+        <span class="band-option-name">${groupLabel(band)}</span>
       </label>
     `;
             }).join('');
@@ -1178,7 +1193,9 @@
                 return;
             }
             const formData = new FormData();
-            formData.append('band', bandSelect.value);
+            const selectedGroup = splitGroupKey(bandSelect.value);
+            formData.append('project', selectedGroup.project);
+            formData.append('group', selectedGroup.group);
             formData.append('role', roleSelect.value);
             files.forEach(file => formData.append('photos', file, file.name));
 
@@ -1190,7 +1207,7 @@
                     return data;
                 })
                 .then(data => {
-                    collectorStatus.textContent = `已上传 ${data.saved.length} 张到 ${data.band}/${data.role}`;
+                    collectorStatus.textContent = `已上传 ${data.saved.length} 张到 ${data.project}/${data.group}/${data.role}`;
                     collectorPhotos.value = '';
                 })
                 .catch(err => {
@@ -1268,7 +1285,7 @@
             const params = new URLSearchParams();
             params.set('async', '1');
             if (relaxed) params.set('mode', 'relaxed');
-            params.set('bands', getSelectedRecognitionBands().join(','));
+            params.set('groups', getSelectedRecognitionBands().join(','));
             const url = apiBase + '/?' + params.toString();
             return fetch(url, { method: 'POST', body: buffer })
                 .then(async r => {
@@ -1428,7 +1445,10 @@
                 }
                 const userFaceSrc = cropFaceFromPreview(detail.bbox) || previewImg.src;
                 const avatarName = detail.avatar_name || name;
-                const seiyuFaceSrc = `/avatar/${encodeURIComponent(avatarName)}`;
+                const avatarParts = [detail.avatar_project, detail.avatar_group, avatarName]
+                    .filter(Boolean)
+                    .map(encodeURIComponent);
+                const seiyuFaceSrc = `/avatar/${avatarParts.join('/')}`;
                 const easterEggMessage = detail.easter_egg_message
                     ? `<div class="easter-egg-message">${detail.easter_egg_message}</div>`
                     : '';

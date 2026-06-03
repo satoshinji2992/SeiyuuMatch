@@ -9,12 +9,6 @@ venv/
 # Sensitive
 .env
 
-# Large models and data
-AdaFace/.git/
-AdaFace/pretrained/
-AdaFace/assets/
-AdaFace/validation_*/
-AdaFace/__pycache__/
 # features.npz is tracked intentionally
 
 # User data

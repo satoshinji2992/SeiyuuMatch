@@ -2,7 +2,7 @@
 
 当前版本：`1.2.0`
 
-> 拍张照，测测你长得最像邦多利哪位女声优 🎸
+> 拍张照，测测你长得最像哪个声优企划成员
 
 [![Version](https://img.shields.io/badge/version-1.2.0-ff6b9d)](./CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-online-c44dff)](#)
@@ -22,7 +22,7 @@
 | 上传照片识别   | 自动检测人脸，告诉你最像谁                       |
 | 多人合照       | 一张图里有几个人就出几份结果                     |
 | Top 5 候选排行 | 不只看第一名，展开看看其他候选人                 |
-| 乐队范围筛选   | 可选择 MyGO!!!!!、Ave Mujica、sumimi 等多个团    |
+| 企划/团体筛选  | 可选择 BanG Dream!、LoveLive! 下的多个团体       |
 | 二挡模式       | 标准模式没识别到脸？降低阈值再来一次             |
 | 声优头像展示   | 结果卡片直接显示匹配声优的头像                   |
 | 数据集贡献     | 可以上传公开清晰的声优照片，帮我们补全数据       |
@@ -34,8 +34,8 @@
 | 项目         | 状态                             |
 | ------------ | -------------------------------- |
 | 声优条目     | 随 `features.npz` 和正式数据集更新 |
-| 默认检测范围 | MyGO!!!!! / Ave Mujica / sumimi  |
-| 支持团体     | 已包含新旧共 13 个团体入口        |
+| 默认检测范围 | BanG Dream! / MyGO!!!!!、Ave Mujica |
+| 支持企划     | BanG Dream! / LoveLive!           |
 | 头像展示     | 独立存放在 `avatar/`             |
 | 乐队图标     | 独立存放在 `icon/`               |
 | 数据集上传   | 进入 `faces_upload/`，需人工审核 |
@@ -67,7 +67,7 @@ https://seiyuumatch.org
 # 1. 创建环境
 conda create -n seiyumatch python=3.10
 conda activate seiyumatch
-pip install opencv-python numpy torch pytorch-lightning pillow requests
+pip install opencv-python numpy insightface onnxruntime requests
 
 # 2. 注册人脸特征
 python3 register.py
@@ -135,10 +135,17 @@ python3 register.py
 sudo systemctl restart 'seiyuumatch@*'
 ```
 
-只更新某个团：
+只更新某个企划：
 
 ```bash
-python3 register.py --band mygo
+python3 register.py --project bangdream
+sudo systemctl restart 'seiyuumatch@*'
+```
+
+只更新某个企划下的团：
+
+```bash
+python3 register.py --project bangdream --group mygo
 sudo systemctl restart 'seiyuumatch@*'
 ```
 
