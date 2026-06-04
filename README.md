@@ -25,6 +25,7 @@
 | 企划/团体筛选  | 可选择 BanG Dream!、LoveLive! 下的多个团体       |
 | 二挡模式       | 标准模式没识别到脸？降低阈值再来一次             |
 | 声优头像展示   | 结果卡片直接显示匹配声优的头像                   |
+| 换脸娱乐功能   | 可把上传照片中的脸替换为最像的声优，并支持 CodeFormer 修复 |
 | 数据集贡献     | 可以上传公开清晰的声优照片，帮我们补全数据       |
 | 反馈意见       | 页面内直接提交，方便后续改进                     |
 | 特殊结果卡     | 支持隐藏候选触发专属展示，不进入普通候选排行     |
@@ -82,6 +83,54 @@ python3 -u server.py --host 127.0.0.1 --port 3724
 http://localhost:3724
 ```
 
+### 换脸与 CodeFormer
+
+换脸默认使用 `inswapper_128.onnx`。为了改善 128 脸块贴回后的发糊问题，可以接入 CodeFormer 做人脸修复。
+
+准备 CodeFormer：
+
+```bash
+cd /path/to
+git clone https://github.com/sczhou/CodeFormer.git
+cd CodeFormer
+pip install -r requirements.txt
+
+PYTHONPATH=/path/to/CodeFormer python3 scripts/download_pretrained_models.py facelib
+PYTHONPATH=/path/to/CodeFormer python3 scripts/download_pretrained_models.py CodeFormer
+```
+
+> 如果 `python3` 没有 `torch`，请使用装有 PyTorch 的解释器，例如 conda 环境里的 `python`。本项目调用 CodeFormer 时会自动设置 `PYTHONPATH`，所以不需要额外执行 `python basicsr/setup.py develop`。
+
+单独测试换脸：
+
+```bash
+python3 face_swap.py tests/青木阳菜_1.jpg 羊宮妃那 -o swap_test_plain
+```
+
+单独测试换脸 + CodeFormer：
+
+```bash
+python3 face_swap.py tests/青木阳菜_1.jpg 羊宮妃那 \
+  --restore-backend codeformer \
+  --codeformer-dir /path/to/CodeFormer \
+  --codeformer-weight 0.7 \
+  -o swap_test_output
+```
+
+服务端启用 CodeFormer：
+
+```bash
+SWAP_RESTORE_BACKEND=codeformer \
+CODEFORMER_DIR=/path/to/CodeFormer \
+CODEFORMER_WEIGHT=0.5 \
+MAX_SWAP_IMAGE_DIM=0 \
+python3 -u server.py --host 127.0.0.1 --port 3724
+```
+
+`MAX_SWAP_IMAGE_DIM` 控制换脸输入图的最长边。默认 `0`，表示换脸时不主动缩小整图，优先保清晰度。服务器还会保留 `MAX_SWAP_UPLOAD_BYTES` 作为安全上限。
+
+`SWAP_IDENTITY_BLEND` 控制换脸时保留多少目标身份特征。默认 `1.0`，表示完全使用目标身份特征；如果想保留一点原脸感，可以调到 `0.8` 或 `0.6`。
+
 ## 公开部署
 
 公开推广时推荐使用双进程部署，可以缓解多人同时上传时的排队：
@@ -106,6 +155,19 @@ sudo cp deploy/nginx-seiyuumatch.conf /etc/nginx/conf.d/seiyuumatch.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+部署模板默认启用 CodeFormer，并打开脸部上采样：
+
+```text
+SWAP_RESTORE_BACKEND=codeformer
+CODEFORMER_DIR=/root/CodeFormer
+CODEFORMER_WEIGHT=0.5
+CODEFORMER_FACE_UPSAMPLE=1
+MAX_SWAP_IMAGE_DIM=0
+SWAP_IDENTITY_BLEND=1.0
+```
+
+如果服务器暂时不启用 CodeFormer，请在 `/etc/systemd/system/seiyuumatch@.service` 里把 `SWAP_RESTORE_BACKEND` 清空，或删除相关 `Environment=` 行。
 
 健康检查：
 

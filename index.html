@@ -447,6 +447,13 @@
             font-size: 13px;
         }
 
+        .result-card .source {
+            margin-top: 5px;
+            color: #777;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
         .result-card .easter-egg-message {
             margin-top: 8px;
             color: #ff3b3b;
@@ -629,13 +636,15 @@
             display: none;
             align-items: center;
             justify-content: center;
-            width: 46px;
+            gap: 6px;
+            min-width: 104px;
             height: 46px;
+            padding: 0 18px;
             border: none;
-            border-radius: 50%;
+            border-radius: 23px;
             background: linear-gradient(135deg, #c44dff, #8f5bff);
             color: #fff;
-            font-size: 22px;
+            font-size: 14px;
             font-weight: 700;
             cursor: pointer;
             box-shadow: 0 12px 28px rgba(196, 77, 255, 0.35);
@@ -774,6 +783,8 @@
         .collector-panel,
         .feedback-panel {
             width: min(92vw, 420px);
+            max-height: calc(100vh - 44px);
+            overflow-y: auto;
             background: #1a1a2e;
             border: 1px solid #34344f;
             border-radius: 14px;
@@ -863,98 +874,137 @@
         }
 
         .count-help {
-            width: 22px;
-            height: 22px;
+            width: 24px;
+            height: 24px;
+            padding: 0;
             border: 1px solid #5a5a7a;
             border-radius: 50%;
             background: #101020;
             color: #d6d6e6;
+            font-size: 12px;
             font-weight: 700;
-            cursor: help;
+            cursor: pointer;
             flex-shrink: 0;
         }
 
-        .count-table-popover {
+        #countOverviewModal {
             position: fixed;
-            left: 24px;
-            top: 24px;
-            z-index: 4;
+            inset: 0;
+            z-index: 22;
             display: none;
-            width: min(640px, calc(100vw - 48px));
-            overflow: visible;
-            padding: 12px;
+            align-items: center;
+            justify-content: center;
+            padding: 22px;
+            background: rgba(15, 15, 26, 0.72);
+        }
+
+        #countOverviewModal.show {
+            display: flex;
+        }
+
+        .count-overview-panel {
+            width: min(94vw, 880px);
+            max-height: min(82vh, 760px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
             border: 1px solid rgba(196, 77, 255, 0.35);
-            border-radius: 18px;
-            background: rgba(16, 16, 32, 0.82);
-            backdrop-filter: blur(10px);
-            box-shadow: 0 14px 50px rgba(0, 0, 0, 0.5);
+            border-radius: 16px;
+            background: #151527;
+            box-shadow: 0 20px 80px rgba(0, 0, 0, 0.56);
         }
 
-        .count-help:hover+.count-table-popover,
-        .count-help:focus+.count-table-popover,
-        .count-table-popover:hover {
-            display: block;
+        .count-overview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 16px 18px;
+            border-bottom: 1px solid #2a2a40;
         }
 
-        .count-table-popover table {
+        .count-overview-header h2 {
+            font-size: 18px;
+        }
+
+        #closeCountOverview {
+            width: 34px;
+            height: 34px;
+            border: none;
+            border-radius: 50%;
+            background: #25253c;
+            color: #fff;
+            font-size: 22px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .count-overview-content {
+            overflow-y: auto;
+            padding: 14px 18px 18px;
+        }
+
+        .count-overview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
+        }
+
+        .count-group-card {
+            border: 1px solid #2a2a40;
+            border-radius: 10px;
+            background: #101020;
+            overflow: hidden;
+        }
+
+        .count-group-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid #2a2a40;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .count-group-total {
+            color: #ff9abb;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .count-role-list {
             width: 100%;
-            table-layout: fixed;
             border-collapse: collapse;
             font-size: 12px;
         }
 
-        .count-table-popover caption {
-            margin-bottom: 8px;
-            color: #fff;
-            text-align: left;
-            font-weight: 700;
-        }
-
-        .count-table-popover th,
-        .count-table-popover td {
-            padding: 5px 4px;
+        .count-role-list td {
+            padding: 8px 10px;
             border-bottom: 1px solid #2a2a40;
-            border-right: 1px solid #24243a;
             color: #d6d6e6;
-            text-align: center;
-            vertical-align: top;
+            vertical-align: middle;
         }
 
-        .count-table-popover th {
-            color: #fff;
+        .count-role-list tr:last-child td {
+            border-bottom: none;
         }
 
-        .count-band-logo {
-            max-width: 52px;
-            max-height: 20px;
-            object-fit: contain;
-            display: block;
-            margin: 0 auto;
-        }
-
-        .count-band-fallback {
-            display: block;
-            font-size: 10px;
+        .count-role-list td:last-child {
+            width: 68px;
+            color: #ff9abb;
             font-weight: 700;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            text-align: right;
             white-space: nowrap;
         }
 
-        .count-cell-name {
+        .count-role-name {
             display: block;
-            color: #fff;
-            font-size: 11px;
-            line-height: 1.25;
-            overflow-wrap: anywhere;
-        }
-
-        .count-cell-num {
-            display: block;
-            margin-top: 2px;
-            color: #ff9abb;
-            font-weight: 700;
-            font-size: 11px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         #submitCollector,
@@ -977,6 +1027,60 @@
             margin-top: 12px;
             color: #d6d6e6;
             font-size: 13px;
+        }
+
+        @media (max-width: 640px) {
+
+            #collectorModal,
+            #feedbackModal,
+            #countOverviewModal {
+                align-items: flex-end;
+                justify-content: center;
+                padding: 0;
+            }
+
+            .collector-panel,
+            .feedback-panel {
+                width: 100%;
+                max-height: 92vh;
+                border-right: none;
+                border-bottom: none;
+                border-left: none;
+                border-radius: 16px 16px 0 0;
+                padding: 18px;
+            }
+
+            .count-overview-panel {
+                width: 100%;
+                max-height: 88vh;
+                border-right: none;
+                border-bottom: none;
+                border-left: none;
+                border-radius: 16px 16px 0 0;
+            }
+
+            .count-overview-header {
+                padding: 14px 16px;
+            }
+
+            .count-overview-content {
+                padding: 12px;
+            }
+
+            .count-overview-grid {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+
+            .count-role-list td {
+                padding: 10px 12px;
+                font-size: 13px;
+            }
+
+            #feedbackFab,
+            #collectorFab {
+                bottom: 14px;
+            }
         }
     </style>
 </head>
@@ -1045,7 +1149,7 @@
     <button id="relaxedRetry" onclick="retryRelaxed()">识别不到? 点击这里降低阈值再试一次!</button>
     <div id="resultActions">
         <button id="retry" onclick="resetAll()">再来一张</button>
-        <button id="swapButton" type="button" aria-label="一键换脸" title="一键换脸">⇄</button>
+        <button id="swapButton" type="button" aria-label="一键换脸" title="一键换脸"><span>⇄</span>一键换脸</button>
     </div>
     <button id="feedbackFab" type="button">反馈意见</button>
     <button id="collectorFab" type="button">上传数据集</button>
@@ -1086,8 +1190,7 @@
                 <select id="roleSelect" name="role" required></select>
                 <div class="dataset-count-wrap">
                     <div id="datasetCount" class="collector-count"></div>
-                    <button id="countHelp" class="count-help" type="button" aria-label="查看全部照片数量表">?</button>
-                    <div id="countTablePopover" class="count-table-popover"></div>
+                    <button id="countHelp" class="count-help" type="button" aria-label="查看全部照片数量">?</button>
                 </div>
 
                 <label for="collectorPhotos">上传照片</label>
@@ -1097,6 +1200,15 @@
                 <button id="submitCollector" type="submit">上传</button>
                 <div id="collectorStatus"></div>
             </form>
+        </div>
+    </div>
+    <div id="countOverviewModal" aria-hidden="true">
+        <div class="count-overview-panel">
+            <div class="count-overview-header">
+                <h2>数据集照片数量</h2>
+                <button id="closeCountOverview" type="button" aria-label="关闭">×</button>
+            </div>
+            <div id="countOverviewContent" class="count-overview-content"></div>
         </div>
     </div>
 
@@ -1132,7 +1244,10 @@
         const collectorPhotos = document.getElementById('collectorPhotos');
         const collectorStatus = document.getElementById('collectorStatus');
         const datasetCount = document.getElementById('datasetCount');
-        const countTablePopover = document.getElementById('countTablePopover');
+        const countHelp = document.getElementById('countHelp');
+        const countOverviewModal = document.getElementById('countOverviewModal');
+        const closeCountOverview = document.getElementById('closeCountOverview');
+        const countOverviewContent = document.getElementById('countOverviewContent');
         const bandFilterOptions = document.getElementById('bandFilterOptions');
         const bandSelectAll = document.getElementById('bandSelectAll');
         const scaleSelect = document.getElementById('scaleSelect');
@@ -1141,6 +1256,7 @@
         let lastUploadBuffer = null;
         let lastOriginalBuffer = null;
         let lastOriginalFile = null;
+        let lastRecognitionDetails = [];
         let lastSwapUrl = null;
         let bandRoles = {};
         let datasetCounts = {};
@@ -1244,25 +1360,45 @@
 
         function updateCountTable() {
             const bands = orderedBands();
-            const maxRows = Math.max(0, ...bands.map(band => (bandRoles[band] || []).length));
-            countTablePopover.innerHTML = `
-    <table>
-      <caption>全部数据集照片数量</caption>
-      <thead><tr>${bands.map(band => `<th title="${groupLabel(band)}">${renderBandIcon(band, 'count')}</th>`).join('')}</tr></thead>
-      <tbody>
-        ${Array.from({ length: maxRows }, (_, rowIndex) => `
-          <tr>
-            ${bands.map(band => {
-                const role = (bandRoles[band] || [])[rowIndex];
-                if (!role) return '<td></td>';
-                const count = ((datasetCounts[band] || {})[role] || 0);
-                return `<td><span class="count-cell-name">${role}</span><span class="count-cell-num">${count} 张</span></td>`;
+            if (!bands.length) {
+                countOverviewContent.innerHTML = '<p style="color:#777;text-align:center;padding:24px 0">暂无数据</p>';
+                return;
+            }
+            countOverviewContent.innerHTML = `
+                <div class="count-overview-grid">
+                    ${bands.map(band => {
+                const roles = bandRoles[band] || [];
+                const total = roles.reduce((sum, role) => sum + (((datasetCounts[band] || {})[role]) || 0), 0);
+                return `
+                    <section class="count-group-card">
+                        <div class="count-group-header">
+                            <span>${groupLabel(band)}</span>
+                            <span class="count-group-total">${total} 张</span>
+                        </div>
+                        <table class="count-role-list">
+                            <tbody>
+                                ${roles.map(role => {
+                    const count = ((datasetCounts[band] || {})[role] || 0);
+                    return `<tr><td><span class="count-role-name" title="${role}">${role}</span></td><td>${count} 张</td></tr>`;
+                }).join('')}
+                            </tbody>
+                        </table>
+                    </section>
+                `;
             }).join('')}
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
+                </div>
+            `;
+        }
+
+        function openCountOverview() {
+            updateCountTable();
+            countOverviewModal.classList.add('show');
+            countOverviewModal.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeCountOverviewModal() {
+            countOverviewModal.classList.remove('show');
+            countOverviewModal.setAttribute('aria-hidden', 'true');
         }
 
         function loadFaceGroups() {
@@ -1415,6 +1551,11 @@
         collectorModal.addEventListener('click', e => {
             if (e.target === collectorModal) closeCollectorModal();
         });
+        countHelp.addEventListener('click', openCountOverview);
+        closeCountOverview.addEventListener('click', closeCountOverviewModal);
+        countOverviewModal.addEventListener('click', e => {
+            if (e.target === countOverviewModal) closeCountOverviewModal();
+        });
         swapButton.addEventListener('click', swapFaces);
 
         collectorForm.addEventListener('submit', e => {
@@ -1498,6 +1639,7 @@
             clearSwapResult();
             resultActions.style.display = 'none';
             swapButton.disabled = false;
+            lastRecognitionDetails = [];
 
             loading.style.display = 'block';
             loadingText.textContent = '正在识别中...';
@@ -1652,11 +1794,24 @@
             return formatSimilarity(detail.similarity);
         }
 
+        function resultSourceLabel(item) {
+            if (!item) return '';
+            if (item.group_label) return item.group_label;
+            if (Array.isArray(item.group_keys) && item.group_keys.length) {
+                return item.group_keys.map(groupLabel).join(', ');
+            }
+            if (item.project && item.group) return `${item.project}/${item.group}`;
+            if (item.project && Array.isArray(item.groups) && item.groups.length) {
+                return item.groups.map(group => `${item.project}/${group}`).join(', ');
+            }
+            return item.band || item.group || '';
+        }
+
         function renderTop5(top5) {
             const rows = (top5 || []).map((item, index) => `
                 <tr>
                     <td>${index + 1}</td>
-                    <td>${item.name}<br><span style="color:#777">${item.band || ''}</span></td>
+                    <td>${item.name}<br><span style="color:#777">${resultSourceLabel(item)}</span></td>
                     <td>${formatDisplayScore(item)}</td>
                 </tr>
             `).join('');
@@ -1704,6 +1859,7 @@
             results.style.display = 'block';
             clearSwapResult();
             setResultActionState(faces.length > 0);
+            lastRecognitionDetails = details || [];
             relaxedRetry.style.display = mode !== 'relaxed' && lastUploadBuffer ? 'inline-block' : 'none';
             results.innerHTML = '';
             if (!faces.length) {
@@ -1728,6 +1884,8 @@
                 const easterEggMessage = detail.easter_egg_message
                     ? `<div class="easter-egg-message">${detail.easter_egg_message}</div>`
                     : '';
+                const sourceLabel = resultSourceLabel(detail);
+                const sourceBlock = sourceLabel ? `<div class="source">${sourceLabel}</div>` : '';
                 const top5Block = detail.easter_egg
                     ? ''
                     : `
@@ -1753,6 +1911,7 @@
         <div class="label">${faces.length > 1 ? '第 ' + (i + 1) + ' 张脸' : ''} 最像</div>
         <div class="name">${name}</div>
         <div class="score">匹配度 ${formatDisplayScore(detail)}</div>
+        ${sourceBlock}
         ${easterEggMessage}
       </div>
       ${top5Block}
@@ -1782,7 +1941,7 @@
                     const params = new URLSearchParams();
                     params.set('groups', getSelectedRecognitionBands().join(','));
                     const url = `${apiBase}/swap_faces?${params.toString()}`;
-                    return fetch(url, { method: 'POST', body: buffer });
+                    return fetch(url, { method: 'POST', body: createSwapRequestBody(buffer) });
                 })
                 .then(async r => {
                     const text = await r.text();
@@ -1853,12 +2012,28 @@
             if (lastOriginalBuffer && lastOriginalBuffer.byteLength <= MAX_SWAP_UPLOAD_BYTES) {
                 return Promise.resolve(lastOriginalBuffer);
             }
-            if (!lastOriginalFile) {
-                return Promise.resolve(lastUploadBuffer);
+            if (lastOriginalBuffer && lastOriginalBuffer.byteLength > MAX_SWAP_UPLOAD_BYTES) {
+                return Promise.reject(new Error('换脸图片太大了，请换一张更小的原图，或先压缩后再试'));
             }
-            return resizeImage(lastOriginalFile, 2048, 0.97)
-                .then(blob => blob.arrayBuffer())
-                .catch(() => lastUploadBuffer || lastOriginalBuffer);
+            return Promise.reject(new Error('没有可用的换脸图片'));
+        }
+
+        function createSwapRequestBody(buffer) {
+            const formData = new FormData();
+            formData.append('image', new Blob([buffer], { type: 'image/jpeg' }), 'upload.jpg');
+            formData.append('details', JSON.stringify(getSwapRecognitionDetails()));
+            return formData;
+        }
+
+        function getSwapRecognitionDetails() {
+            return (lastRecognitionDetails || []).map(detail => ({
+                name: detail.name || '',
+                avatar_name: detail.avatar_name || detail.name || '',
+                avatar_project: detail.avatar_project || '',
+                avatar_group: detail.avatar_group || '',
+                avatar_feature_index: detail.avatar_feature_index,
+                bbox: detail.bbox || null,
+            }));
         }
 
         function resetAll() {
@@ -1875,6 +2050,7 @@
             lastUploadBuffer = null;
             lastOriginalBuffer = null;
             lastOriginalFile = null;
+            lastRecognitionDetails = [];
             fileInput.value = '';
         }
 

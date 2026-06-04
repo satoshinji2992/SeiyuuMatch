@@ -20,6 +20,8 @@ import hmac
 import secrets
 from contextlib import contextmanager
 
+from face_swap import load_inswapper, swap_faces_insightface
+
 try:
     import fcntl
 except ImportError:
@@ -67,30 +69,37 @@ RECOGNITION_QUEUE_TIMEOUT = float(os.environ.get("RECOGNITION_QUEUE_TIMEOUT", "3
 JOB_QUEUE_MAX_SIZE = int(os.environ.get("JOB_QUEUE_MAX_SIZE", "200"))
 MAX_IMAGE_DIM = int(os.environ.get("MAX_IMAGE_DIM", "1280"))
 MAX_UPLOAD_BYTES = 6 * 1024 * 1024
-MAX_SWAP_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_SWAP_UPLOAD_BYTES = int(os.environ.get("MAX_SWAP_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+MAX_SWAP_IMAGE_DIM = int(os.environ.get("MAX_SWAP_IMAGE_DIM", "0"))
+MAX_SWAP_METADATA_BYTES = 128 * 1024
 MAX_FACE_UPLOAD_BYTES = 80 * 1024 * 1024
 MAX_FACE_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FEEDBACK_BYTES = 16 * 1024
 JOB_STALE_TIMEOUT = int(os.environ.get("JOB_STALE_TIMEOUT", "120"))
-SWAP_FACE_SHARPEN_AMOUNT = float(os.environ.get("SWAP_FACE_SHARPEN_AMOUNT", "0.9"))
-SWAP_FACE_SHARPEN_RADIUS = int(os.environ.get("SWAP_FACE_SHARPEN_RADIUS", "18"))
+SWAP_DEBUG_OUTPUT = os.environ.get("SWAP_DEBUG_OUTPUT", "0") == "1"
+SWAP_RESTORE_CMD = os.environ.get("SWAP_RESTORE_CMD", "")
+SWAP_RESTORE_BACKEND = os.environ.get("SWAP_RESTORE_BACKEND", "")
+CODEFORMER_DIR = os.environ.get("CODEFORMER_DIR", "")
+CODEFORMER_WEIGHT = float(os.environ.get("CODEFORMER_WEIGHT", "0.5"))
+CODEFORMER_FACE_UPSAMPLE = os.environ.get("CODEFORMER_FACE_UPSAMPLE", "1") == "1"
+SWAP_IDENTITY_BLEND = float(os.environ.get("SWAP_IDENTITY_BLEND", "1.0"))
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 STATIC_CACHE_SECONDS = 7 * 24 * 60 * 60
+FACE_GROUPS_CACHE_SECONDS = float(os.environ.get("FACE_GROUPS_CACHE_SECONDS", "30"))
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ADMIN_TOKEN_TTL = 24 * 60 * 60
 INSWAPPER_MODEL_NAME = os.environ.get("INSWAPPER_MODEL_NAME", "inswapper_128.onnx")
 recognition_job_queue = mp.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
 swap_job_queue = mp.Queue(maxsize=JOB_QUEUE_MAX_SIZE)
+face_groups_cache_lock = threading.Lock()
+face_groups_cache_data = None
+face_groups_cache_at = 0.0
 HIDDEN_PROJECT = "__hidden__"
 HIDDEN_GROUP = "???"
-EASTER_EGG_NAME = "liyuu"
-EASTER_EGG_DISPLAY_NAME = "Liyuu"
-EASTER_EGG_TRIGGER_SCORE = 70
-EASTER_EGG_MESSAGE = "你引起了李嘉的注意"
 BIG_BROTHER_NAME = "立希"
 BIG_BROTHER_TRIGGER_SCORE = 70
 BIG_BROTHER_MESSAGE = "老大哥正在看着你"
-DEFAULT_SELECTED_GROUPS = {"bangdream:mygo", "bangdream:avemujica"}
+DEFAULT_SELECTED_GROUPS = {"bangdream:mygo", "bangdream:avemujica", "bangdream:sumimi"}
 
 
 @contextmanager
@@ -132,6 +141,49 @@ def job_path(job_id):
 
 def job_result_path(job_id):
     return os.path.join(JOB_RESULTS_DIR, f"{safe_path_segment(job_id, 'job')}.png")
+
+
+def sanitize_recognition_details(details):
+    if not isinstance(details, list):
+        return []
+    sanitized = []
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        cleaned = {}
+        for key in [
+            "name",
+            "avatar_name",
+            "avatar_project",
+            "avatar_group",
+            "project",
+            "group",
+            "easter_egg",
+            "easter_egg_message",
+        ]:
+            value = item.get(key)
+            if isinstance(value, str):
+                cleaned[key] = value[:120]
+        if isinstance(item.get("avatar_feature_index"), int):
+            cleaned["avatar_feature_index"] = item["avatar_feature_index"]
+        else:
+            try:
+                cleaned["avatar_feature_index"] = int(item.get("avatar_feature_index"))
+            except (TypeError, ValueError):
+                pass
+        bbox = item.get("bbox")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            try:
+                cleaned["bbox"] = [float(value) for value in bbox]
+            except (TypeError, ValueError):
+                pass
+        if "avatar_feature_index" in cleaned:
+            sanitized.append(cleaned)
+    return sanitized
+
+
+def job_debug_dir(job_id):
+    return os.path.join(JOB_RESULTS_DIR, "debug", safe_path_segment(job_id, "job"))
 
 
 def write_job_status(job_id, payload):
@@ -329,6 +381,27 @@ def load_face_groups():
     return {"projects": projects}
 
 
+def get_face_groups_cached():
+    global face_groups_cache_data, face_groups_cache_at
+    now = time.time()
+    with face_groups_cache_lock:
+        if (
+            face_groups_cache_data is not None
+            and now - face_groups_cache_at <= FACE_GROUPS_CACHE_SECONDS
+        ):
+            return face_groups_cache_data
+        face_groups_cache_data = load_face_groups()
+        face_groups_cache_at = now
+        return face_groups_cache_data
+
+
+def invalidate_face_groups_cache():
+    global face_groups_cache_data, face_groups_cache_at
+    with face_groups_cache_lock:
+        face_groups_cache_data = None
+        face_groups_cache_at = 0.0
+
+
 def parse_values(value):
     if isinstance(value, (list, tuple, set, np.ndarray)):
         raw = value
@@ -345,14 +418,25 @@ def group_key(project, group):
     return f"{project}:{group}"
 
 
+def group_label_from_keys(group_keys, fallback_project="", fallback_groups=None):
+    labels = []
+    for key in group_keys:
+        project, _, group = key.partition(":")
+        if project and group:
+            labels.append(f"{project}/{group}")
+    if labels:
+        return ", ".join(dict.fromkeys(labels))
+    if fallback_project and fallback_groups:
+        return ", ".join(f"{fallback_project}/{group}" for group in fallback_groups)
+    return encode_values(fallback_groups or [])
+
+
 def parse_selected_groups(value):
     return {str(v).strip() for v in value.split(",") if str(v).strip()}
 
 
 def is_hidden_entry(project, groups, name):
-    return project == HIDDEN_PROJECT and HIDDEN_GROUP in groups and (
-        name.lower() == EASTER_EGG_NAME.lower() or name == BIG_BROTHER_NAME
-    )
+    return project == HIDDEN_PROJECT and HIDDEN_GROUP in groups and name == BIG_BROTHER_NAME
 
 
 def display_score(similarity):
@@ -612,11 +696,21 @@ INSIGHTFACE_RELAXED_DET_SCORE = float(os.environ.get("INSIGHTFACE_RELAXED_DET_SC
 
 
 def resize_for_recognition(img):
+    return resize_for_longest_edge(img, MAX_IMAGE_DIM)
+
+
+def resize_for_swap(img):
+    return resize_for_longest_edge(img, MAX_SWAP_IMAGE_DIM)
+
+
+def resize_for_longest_edge(img, max_dim):
+    if not max_dim or max_dim <= 0:
+        return img
     height, width = img.shape[:2]
     longest = max(width, height)
-    if longest <= MAX_IMAGE_DIM:
+    if longest <= max_dim:
         return img
-    scale = MAX_IMAGE_DIM / longest
+    scale = max_dim / longest
     new_size = (int(width * scale), int(height * scale))
     return cv2.resize(img, new_size, interpolation=cv2.INTER_AREA)
 
@@ -626,15 +720,6 @@ def load_insightface():
     app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
     app.prepare(ctx_id=0, det_size=(INSIGHTFACE_DET_SIZE, INSIGHTFACE_DET_SIZE))
     return app
-
-
-def load_inswapper():
-    from insightface import model_zoo
-    return model_zoo.get_model(
-        INSWAPPER_MODEL_NAME,
-        providers=["CPUExecutionProvider"],
-        download=True,
-    )
 
 
 def load_feature_bundle(features_path):
@@ -659,7 +744,7 @@ def load_feature_bundle(features_path):
 def load_runtime(features_path, include_swapper=False):
     runtime = load_feature_bundle(features_path)
     runtime["insightface_app"] = load_insightface()
-    runtime["inswapper"] = load_inswapper() if include_swapper else None
+    runtime["inswapper"] = load_inswapper(INSWAPPER_MODEL_NAME) if include_swapper else None
     return runtime
 
 
@@ -673,7 +758,9 @@ def detect_faces_insightface(
     img_raw = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img_raw is None:
         return None, []
-    if resize:
+    if isinstance(resize, int) and not isinstance(resize, bool):
+        img_raw = resize_for_longest_edge(img_raw, resize)
+    elif resize:
         img_raw = resize_for_recognition(img_raw)
     detected_faces = insightface_app.get(img_raw)
     detected_faces = [f for f in detected_faces if f.det_score >= det_score_threshold]
@@ -681,14 +768,21 @@ def detect_faces_insightface(
 
 
 def result_entry(name, project, groups, similarity):
+    visible_project = "" if project == HIDDEN_PROJECT else project
+    group_list = sorted(groups)
+    group_keys = [group_key(project, group) for group in group_list] if visible_project else []
+    group_label = group_label_from_keys(group_keys, visible_project, group_list)
     return {
-                "name": name,
-                "project": project,
-                "projects": [project] if project != HIDDEN_PROJECT else [],
-                "group": encode_values(groups),
-                "groups": sorted(groups),
-        "band": encode_values(groups),
-        "bands": sorted(groups),
+        "name": name,
+        "project": visible_project,
+        "projects": [visible_project] if visible_project else [],
+        "identity_key": f"{visible_project}/{name}" if visible_project else name,
+        "group": encode_values(group_list),
+        "groups": group_list,
+        "group_keys": group_keys,
+        "group_label": group_label,
+        "band": encode_values(group_list),
+        "bands": group_list,
         "similarity": round(float(similarity), 4),
         "display_score": display_score(similarity),
     }
@@ -706,11 +800,15 @@ def dedup_results(entries):
                 base["bands"] = list(base["groups"])
                 base["group"] = encode_values(base["groups"])
                 base["band"] = base["group"]
+                base["group_keys"] = sorted(set(prev.get("group_keys", [])) | set(base.get("group_keys", [])))
+                base["group_label"] = group_label_from_keys(
+                    base.get("group_keys", []), base.get("project", ""), base["groups"]
+                )
                 prev_projects = prev["projects"] if prev["projects"] else []
                 cur_projects = base["projects"] if base["projects"] else []
-                all_projects = list(dict.fromkeys(prev_projects + cur_projects))
+                all_projects = list(dict.fromkeys(cur_projects + prev_projects))
                 base["projects"] = all_projects
-                base["project"] = all_projects[0] if all_projects else base["project"]
+                base["project"] = cur_projects[0] if cur_projects else (all_projects[0] if all_projects else base["project"])
             merged[key] = base
         else:
             prev = merged[key]
@@ -718,6 +816,10 @@ def dedup_results(entries):
             prev["bands"] = list(prev["groups"])
             prev["group"] = encode_values(prev["groups"])
             prev["band"] = prev["group"]
+            prev["group_keys"] = sorted(set(prev.get("group_keys", [])) | set(entry.get("group_keys", [])))
+            prev["group_label"] = group_label_from_keys(
+                prev.get("group_keys", []), prev.get("project", ""), prev["groups"]
+            )
             prev_projects = prev["projects"] if prev["projects"] else []
             cur_projects = entry["projects"] if entry["projects"] else []
             all_projects = list(dict.fromkeys(prev_projects + cur_projects))
@@ -742,7 +844,7 @@ def recognize_insightface(
         insightface_app,
         image_bytes,
         det_score_threshold,
-        resize=False,
+        resize=True,
     )
     if img_raw is None:
         return []
@@ -765,27 +867,27 @@ def recognize_insightface(
     filtered_names = [name for name, keep in zip(names, entry_mask) if keep]
     filtered_projects = [project for project, keep in zip(projects, entry_mask) if keep]
     filtered_group_sets = [group_set for group_set, keep in zip(group_sets, entry_mask) if keep]
+    filtered_indices = [idx for idx, keep in enumerate(entry_mask) if keep]
     filtered_features = feature_db[entry_mask]
     filtered_norms = feature_norms[entry_mask]
     img_h, img_w = img_raw.shape[:2]
 
     results = []
     for face in detected_faces:
-        vec = face.normed_embedding
-        vec_norm = np.linalg.norm(vec)
-        if vec_norm == 0:
+        vec = np.asarray(face.normed_embedding, dtype=np.float32)
+        if vec.size != feature_db.shape[1] or not np.isfinite(vec).all():
             continue
-        cos_results = filtered_features @ vec / (filtered_norms * vec_norm)
+        vec_norm = np.linalg.norm(vec)
+        if vec_norm == 0 or not np.isfinite(vec_norm):
+            continue
+        denom = filtered_norms * vec_norm
+        valid = np.isfinite(denom) & (denom > 0)
+        if not np.any(valid):
+            continue
+        cos_results = np.full(len(filtered_names), -np.inf, dtype=np.float32)
+        cos_results[valid] = filtered_features[valid] @ vec / denom[valid]
+        cos_results = np.nan_to_num(cos_results, nan=-np.inf, posinf=-np.inf, neginf=-np.inf)
 
-        easter_egg_idx = next(
-            (
-                idx
-                for idx, name in enumerate(filtered_names)
-                if name.lower() == EASTER_EGG_NAME.lower()
-                and is_hidden_entry(filtered_projects[idx], filtered_group_sets[idx], name)
-            ),
-            None,
-        )
         big_brother_idx = next(
             (
                 idx
@@ -795,7 +897,7 @@ def recognize_insightface(
             ),
             None,
         )
-        hidden_indices = {idx for idx in (easter_egg_idx, big_brother_idx) if idx is not None}
+        hidden_indices = {big_brother_idx} if big_brother_idx is not None else set()
         raw_max_idx = int(np.argmax(cos_results))
         visible_indices = [idx for idx in range(len(cos_results)) if idx not in hidden_indices]
         if not visible_indices:
@@ -810,13 +912,6 @@ def recognize_insightface(
         ):
             max_idx = big_brother_idx
             easter_egg_triggered = "big_brother"
-        elif (
-            easter_egg_idx is not None
-            and easter_egg_idx == raw_max_idx
-            and display_score(cos_results[easter_egg_idx]) >= EASTER_EGG_TRIGGER_SCORE
-        ):
-            max_idx = easter_egg_idx
-            easter_egg_triggered = "liyuu"
 
         top_indices = [
             idx for idx in np.argsort(cos_results)[::-1] if idx not in hidden_indices
@@ -844,36 +939,41 @@ def recognize_insightface(
 
         best_name = filtered_names[max_idx]
         best_project = filtered_projects[max_idx]
-        best_groups = set(filtered_group_sets[max_idx])
-        best_similarity = cos_results[max_idx]
-        for idx in range(len(filtered_names)):
-            if idx == max_idx or idx in hidden_indices:
+        best_avatar_groups = set(filtered_group_sets[max_idx])
+        best_feature_index = filtered_indices[max_idx]
+        if easter_egg_triggered:
+            result = result_entry(
+                best_name,
+                best_project,
+                best_avatar_groups,
+                cos_results[max_idx],
+            )
+        else:
+            same_name_entries = [
+                result_entry(
+                    filtered_names[idx],
+                    filtered_projects[idx],
+                    filtered_group_sets[idx],
+                    cos_results[idx],
+                )
+                for idx in range(len(filtered_names))
+                if idx not in hidden_indices and filtered_names[idx] == best_name
+            ]
+            if not same_name_entries:
                 continue
-            if filtered_names[idx] == best_name:
-                best_groups.update(filtered_group_sets[idx])
-                if cos_results[idx] > best_similarity:
-                    best_similarity = cos_results[idx]
-                    best_project = filtered_projects[idx]
-
-        result = result_entry(
-            EASTER_EGG_DISPLAY_NAME if easter_egg_triggered == "liyuu" else best_name,
-            best_project,
-            best_groups,
-            cos_results[max_idx],
-        )
+            result = dedup_results(same_name_entries)[0]
         result.update(
             {
                 "avatar_name": best_name,
                 "avatar_project": best_project,
-                "avatar_group": sorted(best_groups)[0]
-                if best_groups
+                "avatar_group": sorted(best_avatar_groups)[0]
+                if best_avatar_groups
                 else "",
+                "avatar_feature_index": int(best_feature_index),
                 "top5": [] if easter_egg_triggered else top5,
                 "easter_egg": easter_egg_triggered,
                 "easter_egg_message": (
-                    EASTER_EGG_MESSAGE
-                    if easter_egg_triggered == "liyuu"
-                    else BIG_BROTHER_MESSAGE
+                    BIG_BROTHER_MESSAGE
                     if easter_egg_triggered == "big_brother"
                     else ""
                 ),
@@ -884,114 +984,10 @@ def recognize_insightface(
     return results
 
 
-def swap_faces_insightface(
-    insightface_app,
-    inswapper,
-    names,
-    projects,
-    groups,
-    feature_db,
-    feature_norms,
-    image_bytes,
-    det_score_threshold,
-    selected_groups,
-):
-    img_raw, detected_faces = detect_faces_insightface(
-        insightface_app, image_bytes, det_score_threshold
-    )
-    if img_raw is None or not detected_faces:
-        return None, []
-
-    recognition = recognize_insightface(
-        insightface_app,
-        names,
-        projects,
-        groups,
-        feature_db,
-        feature_norms,
-        image_bytes,
-        det_score_threshold,
-        selected_groups,
-    )
-    if not recognition:
-        return None, []
-
-    swap_result = img_raw.copy()
-    source_cache = {}
-    for face, detail in zip(detected_faces, recognition):
-        avatar_project = detail.get("avatar_project", "")
-        avatar_group = detail.get("avatar_group", "")
-        avatar_name = detail.get("avatar_name", "")
-        avatar_path = find_avatar_file(avatar_name, avatar_project, avatar_group)
-        if not avatar_path:
-            continue
-        cached = source_cache.get(avatar_path)
-        if cached is None:
-            source_img = cv2.imread(avatar_path)
-            if source_img is None:
-                source_cache[avatar_path] = None
-                continue
-            source_faces = insightface_app.get(source_img)
-            if not source_faces:
-                source_cache[avatar_path] = None
-                continue
-            cached = max(
-                source_faces,
-                key=lambda f: (
-                    float(getattr(f, "det_score", 0.0)),
-                    float((f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])),
-                ),
-            )
-            source_cache[avatar_path] = cached
-        if cached is None:
-            continue
-        swap_result = inswapper.get(swap_result, face, cached, paste_back=True)
-        swap_result = sharpen_face_region(
-            swap_result,
-            face,
-            amount=SWAP_FACE_SHARPEN_AMOUNT,
-            radius=SWAP_FACE_SHARPEN_RADIUS,
-        )
-    return swap_result, recognition
-
-
-def sharpen_face_region(image_bgr, face, amount=0.9, radius=18):
-    bbox = getattr(face, "bbox", None)
-    if bbox is None:
-        return image_bgr
-    h, w = image_bgr.shape[:2]
-    x1 = max(0, int(bbox[0]) - radius)
-    y1 = max(0, int(bbox[1]) - radius)
-    x2 = min(w, int(bbox[2]) + radius)
-    y2 = min(h, int(bbox[3]) + radius)
-    if x2 <= x1 or y2 <= y1:
-        return image_bgr
-
-    roi = image_bgr[y1:y2, x1:x2]
-    blurred = cv2.GaussianBlur(roi, (0, 0), sigmaX=1.1, sigmaY=1.1)
-    sharpened = cv2.addWeighted(roi, 1.0 + amount, blurred, -amount, 0)
-
-    mask = np.zeros((y2 - y1, x2 - x1), dtype=np.float32)
-    inner_x1 = min(x2 - x1, max(0, int(bbox[0]) - x1))
-    inner_y1 = min(y2 - y1, max(0, int(bbox[1]) - y1))
-    inner_x2 = max(0, min(x2 - x1, int(bbox[2]) - x1))
-    inner_y2 = max(0, min(y2 - y1, int(bbox[3]) - y1))
-    if inner_x2 <= inner_x1 or inner_y2 <= inner_y1:
-        image_bgr[y1:y2, x1:x2] = sharpened
-        return image_bgr
-
-    mask[inner_y1:inner_y2, inner_x1:inner_x2] = 1.0
-    blur_k = max(3, radius // 2 * 2 + 1)
-    mask = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
-    mask = mask[..., None]
-    mixed = roi * (1.0 - mask) + sharpened * mask
-    image_bgr[y1:y2, x1:x2] = np.clip(mixed, 0, 255).astype(np.uint8)
-    return image_bgr
-
-
 class FaceHandler(BaseHTTPRequestHandler):
     insightface_app = None
     inswapper = None
+    runtime_lock = threading.Lock()
     names = None
     projects = None
     groups = None
@@ -999,10 +995,20 @@ class FaceHandler(BaseHTTPRequestHandler):
     feature_norms = None
 
     @classmethod
+    def ensure_insightface_app(cls):
+        if cls.insightface_app is not None:
+            return
+        with cls.runtime_lock:
+            if cls.insightface_app is None:
+                print("[server] lazy loading InsightFace for sync recognition...", flush=True)
+                cls.insightface_app = load_insightface()
+
+    @classmethod
     def process_recognition(cls, body, det_score_threshold, selected_groups, relaxed, queue_wait):
         now = time.localtime()
         day = daily_key(now)
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", now)
+        cls.ensure_insightface_app()
         result = recognize_insightface(
             cls.insightface_app,
             cls.names,
@@ -1083,10 +1089,15 @@ class FaceHandler(BaseHTTPRequestHandler):
     def send_static_file(self, path, content_type):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(os.path.getsize(path)))
         self.send_header("Cache-Control", f"public, max-age={STATIC_CACHE_SECONDS}")
         self.end_headers()
         with open(path, "rb") as f:
-            self.wfile.write(f.read())
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def handle_face_upload(self, content_length):
         if content_length <= 0:
@@ -1182,6 +1193,7 @@ class FaceHandler(BaseHTTPRequestHandler):
             f"[server] face upload project={project} group={group} role={role} files={len(saved)} bytes={content_length}",
             flush=True,
         )
+        invalidate_face_groups_cache()
         self.send_json(200, {"saved": saved, "project": project, "group": group, "role": role})
 
     def handle_feedback_upload(self, content_length):
@@ -1228,7 +1240,40 @@ class FaceHandler(BaseHTTPRequestHandler):
             self.send_json(413, {"error": "image too large"})
             return
 
-        body = self.rfile.read(content_length)
+        content_type = self.headers.get("Content-Type", "")
+        request_body = self.rfile.read(content_length)
+        body = request_body
+        recognition_details = []
+        if content_type.startswith("multipart/form-data"):
+            message = BytesParser(policy=email_policy).parsebytes(
+                (
+                    f"Content-Type: {content_type}\r\n"
+                    f"Content-Length: {content_length}\r\n"
+                    "\r\n"
+                ).encode("utf-8")
+                + request_body
+            )
+            body = b""
+            details_payload = b""
+            for part in message.iter_parts():
+                if part.get_content_disposition() != "form-data":
+                    continue
+                name = part.get_param("name", header="content-disposition")
+                payload = part.get_payload(decode=True) or b""
+                if name == "image":
+                    body = payload
+                elif name == "details" and len(payload) <= MAX_SWAP_METADATA_BYTES:
+                    details_payload = payload
+            if details_payload:
+                try:
+                    recognition_details = sanitize_recognition_details(
+                        json.loads(details_payload.decode("utf-8"))
+                    )
+                except Exception:
+                    recognition_details = []
+        if not body:
+            self.send_json(400, {"error": "empty image"})
+            return
         parsed_path = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed_path.query)
         relaxed = params.get("mode", [""])[0] == "relaxed"
@@ -1262,6 +1307,7 @@ class FaceHandler(BaseHTTPRequestHandler):
                     "relaxed": relaxed,
                     "content_length": content_length,
                     "queued_at": time.time(),
+                    "recognition_details": recognition_details,
                 }
             )
         except queue.Full:
@@ -1428,7 +1474,7 @@ class FaceHandler(BaseHTTPRequestHandler):
         elif path == "/people":
             self.send_json(200, {"names": self.names})
         elif path == "/face_groups":
-            self.send_json(200, load_face_groups())
+            self.send_json(200, get_face_groups_cached())
         elif path == "/health":
             self.send_json(200, {"ok": True, "people": len(self.names or [])})
         else:
@@ -1657,9 +1703,21 @@ def swap_job_worker(features_path, job_queue):
                 job["body"],
                 job["det_score_threshold"],
                 job["selected_groups"],
+                detect_faces=detect_faces_insightface,
+                recognize=recognize_insightface,
+                debug_dir=job_debug_dir(job_id) if SWAP_DEBUG_OUTPUT else None,
+                restore_cmd=SWAP_RESTORE_CMD,
+                restore_backend=SWAP_RESTORE_BACKEND,
+                codeformer_dir=CODEFORMER_DIR,
+                codeformer_weight=CODEFORMER_WEIGHT,
+                codeformer_face_upsample=CODEFORMER_FACE_UPSAMPLE,
+                recognition_details=job.get("recognition_details"),
+                swap_image_max_dim=MAX_SWAP_IMAGE_DIM,
+                identity_blend=SWAP_IDENTITY_BLEND,
             )
             if swapped_img is None or not recognition:
                 raise RuntimeError("没有检测到可替换的人脸")
+            out_h, out_w = swapped_img.shape[:2]
             result_path = job_result_path(job_id)
             ok, encoded = cv2.imencode(".png", swapped_img)
             if not ok:
@@ -1683,7 +1741,9 @@ def swap_job_worker(features_path, job_queue):
                 },
             )
             print(
-                f"[server] SWAP JOB {job_id} {job['content_length']} bytes mode={'relaxed' if job['relaxed'] else 'default'} wait={queue_wait:.2f}s in {elapsed:.2f}s",
+                f"[server] SWAP JOB {job_id} {job['content_length']} bytes mode={'relaxed' if job['relaxed'] else 'default'} "
+                f"restore={SWAP_RESTORE_BACKEND or 'off'} face_upsample={int(CODEFORMER_FACE_UPSAMPLE)} "
+                f"identity_blend={SWAP_IDENTITY_BLEND} out={out_w}x{out_h} wait={queue_wait:.2f}s in {elapsed:.2f}s",
                 flush=True,
             )
         except Exception as e:
@@ -1719,9 +1779,22 @@ def main():
     feature_db = bundle["feature_db"]
     feature_norms = bundle["feature_norms"]
     print(f"Loaded {len(names)} people, feature dim: {feature_db.shape[1]}")
+    print(
+        "[server] swap config "
+        f"restore={SWAP_RESTORE_BACKEND or 'off'} "
+        f"codeformer_dir={'set' if CODEFORMER_DIR else 'unset'} "
+        f"codeformer_weight={CODEFORMER_WEIGHT} "
+        f"face_upsample={int(CODEFORMER_FACE_UPSAMPLE)} "
+        f"identity_blend={SWAP_IDENTITY_BLEND} "
+        f"max_swap_dim={MAX_SWAP_IMAGE_DIM}",
+        flush=True,
+    )
 
-    print("Loading InsightFace buffalo_l...")
-    FaceHandler.insightface_app = load_insightface()
+    print(
+        "[server] InsightFace loads in recognition/swap workers; sync path loads lazily.",
+        flush=True,
+    )
+    FaceHandler.insightface_app = None
     FaceHandler.names = names
     FaceHandler.projects = projects
     FaceHandler.groups = groups

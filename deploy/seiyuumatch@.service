@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/root/SeiyuuMatch
-ExecStart=/root/miniconda3/envs/seiyumatch/bin/python -u server.py --host 127.0.0.1 --port %i --backend insightface
+ExecStart=/root/miniconda3/envs/seiyumatch/bin/python -u server.py --host 127.0.0.1 --port %i
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
@@ -17,6 +17,13 @@ Environment=MAX_IMAGE_DIM=1280
 Environment=INSIGHTFACE_DET_SIZE=960
 Environment=INSIGHTFACE_DEFAULT_DET_SCORE=0.5
 Environment=INSIGHTFACE_RELAXED_DET_SCORE=0.3
+Environment=MAX_SWAP_UPLOAD_BYTES=20971520
+Environment=MAX_SWAP_IMAGE_DIM=1600
+Environment=SWAP_IDENTITY_BLEND=0.65
+Environment=SWAP_RESTORE_BACKEND=codeformer
+Environment=CODEFORMER_DIR=/root/CodeFormer
+Environment=CODEFORMER_WEIGHT=0.5
+Environment=CODEFORMER_FACE_UPSAMPLE=1
 
 [Install]
 WantedBy=multi-user.target

@@ -10,6 +10,7 @@ venv/
 .env
 
 # features.npz is tracked intentionally
+features.npz.bak*
 
 # User data
 uploads/
@@ -20,6 +21,8 @@ results/
 exports/
 faces/
 tests/
+tmp_*/
+swap_test_output/
 
 # Logs
 output.log

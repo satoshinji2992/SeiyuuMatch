@@ -461,6 +461,19 @@
             background: #151527
         }
 
+        .table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid #2a2a40;
+            border-radius: 12px;
+            background: #111122;
+            -webkit-overflow-scrolling: touch
+        }
+
+        .table-wrap table.data-table {
+            min-width: 760px
+        }
+
         .tag {
             display: inline-block;
             padding: 2px 8px;
@@ -488,6 +501,124 @@
             text-align: center;
             padding: 60px 20px;
             color: #666
+        }
+
+        @media (max-width: 720px) {
+            .topbar {
+                padding: 12px 14px;
+                gap: 12px
+            }
+
+            .topbar h2 {
+                font-size: 14px
+            }
+
+            .topbar button {
+                padding: 6px 12px;
+                white-space: nowrap
+            }
+
+            .tabs {
+                padding: 0 12px;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch
+            }
+
+            .tab {
+                flex: 0 0 auto;
+                padding: 12px 14px;
+                white-space: nowrap
+            }
+
+            .content {
+                padding: 14px
+            }
+
+            .stats {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                margin-bottom: 18px
+            }
+
+            .stat-card {
+                padding: 14px
+            }
+
+            .stat-card .value {
+                font-size: 20px;
+                word-break: break-word
+            }
+
+            .toolbar {
+                align-items: stretch;
+                gap: 8px
+            }
+
+            .toolbar button,
+            .toolbar select {
+                min-height: 40px;
+                flex: 1 1 140px
+            }
+
+            .breadcrumb {
+                flex-wrap: wrap;
+                line-height: 1.6
+            }
+
+            .folder-grid {
+                grid-template-columns: 1fr;
+                gap: 10px
+            }
+
+            .folder-card {
+                padding: 16px
+            }
+
+            .photo-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px
+            }
+
+            .photo-item .photo-del {
+                display: flex
+            }
+
+            .detail-inner {
+                padding: 54px 14px 20px
+            }
+
+            .detail-close {
+                top: 10px;
+                right: 12px
+            }
+
+            .detail-img {
+                max-height: 44vh
+            }
+
+            .detail-meta {
+                grid-template-columns: 1fr
+            }
+
+            .face-row {
+                align-items: flex-start;
+                flex-wrap: wrap;
+                gap: 8px
+            }
+
+            .face-row .face-name {
+                min-width: calc(100% - 36px)
+            }
+
+            .empty-state {
+                padding: 42px 14px
+            }
+        }
+
+        @media (max-width: 380px) {
+            .stats {
+                grid-template-columns: 1fr
+            }
         }
     </style>
 </head>
@@ -777,7 +908,7 @@
         <td>${r.photo ? `<a href="/admin/photo/${encodeURIComponent(r.photo)}" target="_blank" style="color:#ff6b9d">查看</a>` : '-'}</td>
       </tr>`;
                 });
-                $('#historyContent').innerHTML = `<table class="data-table"><thead><tr><th>时间</th><th>模式</th><th>范围</th><th>识别结果</th><th>照片</th></tr></thead><tbody>${rows}</tbody></table>`;
+                $('#historyContent').innerHTML = `<div class="table-wrap"><table class="data-table"><thead><tr><th>时间</th><th>模式</th><th>范围</th><th>识别结果</th><th>照片</th></tr></thead><tbody>${rows}</tbody></table></div>`;
             }).catch(() => { $('#historyContent').innerHTML = '<div class="empty-state">加载失败</div>' });
         }
         $('#historyRefresh').onclick = () => { loadHistoryDays(); loadHistory() };
@@ -797,7 +928,7 @@
         <td style="color:#666;font-size:11px">${r.ip || ''}<br>${r.user_agent || ''}</td>
       </tr>`;
                 });
-                $('#feedbackContent').innerHTML = `<table class="data-table"><thead><tr><th>时间</th><th>内容</th><th>联系方式</th><th>IP / UA</th></tr></thead><tbody>${rows}</tbody></table>`;
+                $('#feedbackContent').innerHTML = `<div class="table-wrap"><table class="data-table"><thead><tr><th>时间</th><th>内容</th><th>联系方式</th><th>IP / UA</th></tr></thead><tbody>${rows}</tbody></table></div>`;
             }).catch(() => { $('#feedbackContent').innerHTML = '<div class="empty-state">加载失败</div>' });
         }
         $('#feedbackRefresh').onclick = loadFeedback;
