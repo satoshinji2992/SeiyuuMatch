@@ -1,12 +1,12 @@
 # SeiyuuMatch
 
-当前版本：`1.2.0`
+当前版本：`2.0.0`
 
-> 拍张照，测测你长得最像哪个声优企划成员
+> 拍张照，测测你长得最像哪个女声优
 
-[![Version](https://img.shields.io/badge/version-1.2.0-ff6b9d)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0-ff6b9d)](./CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-online-c44dff)](#)
-[![Dataset](https://img.shields.io/badge/dataset-expandable-6c5ce7)](#)
+[![Dataset](https://img.shields.io/badge/dataset-119_people-6c5ce7)](#)
 [![Privacy](https://img.shields.io/badge/privacy-upload%20notice-2d3436)](#隐私说明)
 
 ## 运行界面
@@ -17,29 +17,30 @@
 
 ## 功能一览
 
-| 功能           | 说明                                             |
-| -------------- | ------------------------------------------------ |
-| 上传照片识别   | 自动检测人脸，告诉你最像谁                       |
-| 多人合照       | 一张图里有几个人就出几份结果                     |
-| Top 5 候选排行 | 不只看第一名，展开看看其他候选人                 |
-| 企划/团体筛选  | 可选择 BanG Dream!、LoveLive! 下的多个团体       |
-| 二挡模式       | 标准模式没识别到脸？降低阈值再来一次             |
-| 声优头像展示   | 结果卡片直接显示匹配声优的头像                   |
+| 功能           | 说明                                                       |
+| -------------- | ---------------------------------------------------------- |
+| 上传照片识别   | 自动检测人脸，告诉你最像谁                                 |
+| 多人合照       | 一张图里有几个人就出几份结果                               |
+| Top 5 候选排行 | 不只看第一名，展开看看其他候选人                           |
+| 双企划标签页   | bangdream（粉）/ lovelive（金）标签切换，可跨企划多选      |
+| 二挡模式       | 标准模式没识别到脸？降低阈值再来一次                       |
+| 声优头像展示   | 结果卡片直接显示匹配声优的头像                             |
 | 换脸娱乐功能   | 可把上传照片中的脸替换为最像的声优，并支持 CodeFormer 修复 |
-| 数据集贡献     | 可以上传公开清晰的声优照片，帮我们补全数据       |
-| 反馈意见       | 页面内直接提交，方便后续改进                     |
-| 特殊结果卡     | 支持隐藏候选触发专属展示，不进入普通候选排行     |
+| 跨团声优合并   | 同一人在多个团的结果自动去重合并                           |
+| 数据集贡献     | 可以上传公开清晰的声优照片，帮我们补全数据                 |
+| 反馈意见       | 页面内直接提交，方便后续改进                               |
+| 特殊结果卡     | 支持隐藏候选触发专属展示，不进入普通候选排行               |
 
 ## 数据概览
 
-| 项目         | 状态                             |
-| ------------ | -------------------------------- |
-| 声优条目     | 随 `features.npz` 和正式数据集更新 |
-| 默认检测范围 | BanG Dream! / MyGO!!!!!、Ave Mujica |
-| 支持企划     | BanG Dream! / LoveLive!           |
-| 头像展示     | 独立存放在 `avatar/`             |
-| 乐队图标     | 独立存放在 `icon/`               |
-| 数据集上传   | 进入 `faces_upload/`，需人工审核 |
+| 项目         | 数量   | 详情                                                                                                                   |
+| ------------ | ------ | ---------------------------------------------------------------------------------------------------------------------- |
+| 声优条目     | 119 人 | bangdream 64 + lovelive 54 + hidden 1                                                                                  |
+| bangdream    | 13 团  | ppp / roselia / afterglow / pastel / hhw / ras / morfonica / mygo / sumimi / avemujica / mewtype / millsage / dumbrock |
+| lovelive     | 5 团   | μ's / 虹咲 / Aqours / Liella! / 莲之空                                                                                 |
+| 默认检测范围 | 2 团   | MyGO!!!!! / Ave Mujica                                                                                                 |
+| 头像展示     | 89 人  | 独立存放在 `avatar/`                                                                                                   |
+| 乐队图标     | 13 个  | 独立存放在 `icon/`                                                                                                     |
 
 ## 在线访问
 
@@ -61,6 +62,7 @@ https://seiyuumatch.org
 识别功能会把照片上传到服务器处理，并保存一份压缩后的历史记录。数据集贡献入口会把照片存到 `faces_upload/` 待审核目录。请不要上传敏感照片、他人隐私照片，或没有权利处理的图片。
 
 ---
+\
 
 ## 本地部署
 
@@ -81,6 +83,32 @@ python3 -u server.py --host 127.0.0.1 --port 3724
 
 ```
 http://localhost:3724
+```
+
+### 注册工具
+
+全量注册（需要较大内存）：
+
+```bash
+python3 register.py
+```
+
+逐团注册（节省内存，推荐）：
+
+```bash
+python3 register.py --by-group
+```
+
+只更新某个企划：
+
+```bash
+python3 register.py --project bangdream
+```
+
+只更新某个团：
+
+```bash
+python3 register.py --project bangdream --group mygo
 ```
 
 ### 换脸与 CodeFormer
@@ -193,7 +221,7 @@ URL: http://127.0.0.1:8080
 审核通过后，把照片移动到正式数据目录，然后重新注册特征：
 
 ```bash
-python3 register.py
+python3 register.py --by-group
 sudo systemctl restart 'seiyuumatch@*'
 ```
 
@@ -204,7 +232,7 @@ python3 register.py --project bangdream
 sudo systemctl restart 'seiyuumatch@*'
 ```
 
-只更新某个企划下的团：
+只更新某个团：
 
 ```bash
 python3 register.py --project bangdream --group mygo

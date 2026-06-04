@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.0.0 - 2026-06-04
+
+双企划大更新，LoveLive! 全员参战。
+
+### 更新亮点
+
+- **LoveLive! 全员加入**：缪斯（μ's）、虹咲、Aqours、Liella!、莲之空 5 个团 54 名声优加入识别数据库，声优总数从 60+ 扩充到 **119 人**。
+- **双企划标签页**：识别范围新增 bangdream（粉色）/ lovelive（金色）标签页切换，可跨企划同时选团，标签页显示已选团数 badge。
+- **跨团声优智能合并**：同一声优出现在多个团时（如佐々木李子在 Ave Mujica 和 sumimi，林鼓子在 MyGO!!!!! 和虹咲），结果页自动去重合并，展示所有所属团。
+- **换脸功能**：新增 inswapper 换脸，支持 CodeFormer 人脸修复，可调身份混合比例。
+- **按团独立注册**：feature_id 改为 `project/group/name` 三元组，每人每团独立特征向量，不再跨团合并。新增 `--by-group` 逐团注册模式，节省内存。
+
+### 注册工具变更
+
+- `feature_id` 从 `project/name` 改为 `project/group/name`。
+- 新增 `--by-group` 参数：加载模型一次，逐团注册并逐团 upsert，每团处理完释放内存。
+- 新增 `iter_groups()` 辅助函数遍历所有团。
+- upsert key 从 `(project, name)` 改为 `(project, group, name)`。
+
+### 前端变更
+
+- 识别范围区域改为标签页 + 面板布局，标签页在面板外部上方贴着。
+- 团名显示从 `project/group` 简化为只显示 `group`（企划由标签页指示）。
+- 选择状态用 `Set` 持久化，切换标签页不丢失另一个企划的选择。
+- 全选按钮只影响当前标签页下的团。
+- 新增 lovelive 22 名声优的头像（`avatar/`）。
+
+### 数据
+
+- 声优条目：119 人（bangdream 64 + lovelive 54 + hidden 1）。
+- bangdream 13 团：ppp / roselia / afterglow / pastel / hhw / ras / morfonica / mygo / sumimi / avemujica / mewtype / millsage / dumbrock。
+- lovelive 5 团：μ's / 虹咲 / Aqours / Liella! / 莲之空。
+- 默认检测范围不变：MyGO!!!!! / Ave Mujica。
+
 ## 1.2.0 - 2026-05-16
 
 面向数据维护、注册稳定性和结果展示的小型版本更新。
