@@ -644,6 +644,7 @@
             <button class="tab" data-panel="history">识别记录</button>
             <button class="tab" data-panel="feedback">用户反馈</button>
             <button class="tab" data-panel="faces">数据集上传</button>
+            <button class="tab" data-panel="swaps">换脸结果</button>
         </div>
         <div class="content">
             <div id="overview" class="panel active">
@@ -678,6 +679,12 @@
                     <button id="facesRefresh">刷新</button>
                 </div>
                 <div id="facesContent"></div>
+            </div>
+            <div id="swaps" class="panel">
+                <div class="toolbar">
+                    <button id="swapRefresh">刷新</button>
+                </div>
+                <div id="swapContent"></div>
             </div>
         </div>
     </div>
@@ -742,6 +749,7 @@
                 if (btn.dataset.panel === 'history') { loadHistoryDays(); loadHistory() }
                 if (btn.dataset.panel === 'feedback') loadFeedback();
                 if (btn.dataset.panel === 'faces') loadFaces();
+                if (btn.dataset.panel === 'swaps') loadSwaps();
             };
         });
 
@@ -964,6 +972,31 @@
             }).catch(() => { $('#facesContent').innerHTML = '<div class="empty-state">加载失败</div>' });
         }
         $('#facesRefresh').onclick = loadFaces;
+
+        // ===== Swap results =====
+        function loadSwaps() {
+            api('/admin/api/swap').then(d => {
+                const data = d.data || {};
+                const days = Object.keys(data);
+                if (!days.length) { $('#swapContent').innerHTML = '<div class="empty-state">暂无换脸结果</div>'; return }
+                let html = '';
+                days.forEach(day => {
+                    const files = data[day];
+                    html += `<div style="margin-bottom:24px"><h3 style="font-size:15px;margin-bottom:10px;color:#aaa;font-weight:600">${day}</h3><div class="photo-grid">`;
+                    files.forEach(f => {
+                        const src = '/admin/swap_photo/' + encodeURIComponent(day) + '/' + encodeURIComponent(f.filename);
+                        const label = f.filename.replace(/\.png$/i, '').replace(/_/g, ' ');
+                        html += `<div class="photo-item" onclick="openFaceDetail('${src}')">
+            <img src="${src}" loading="lazy" alt="">
+            <div class="photo-info">${fmtSize(f.size)}</div>
+          </div>`;
+                    });
+                    html += '</div></div>';
+                });
+                $('#swapContent').innerHTML = html;
+            }).catch(() => { $('#swapContent').innerHTML = '<div class="empty-state">加载失败</div>' });
+        }
+        $('#swapRefresh').onclick = loadSwaps;
 
         function openFaceDetail(src) {
             $('#detailInner').innerHTML = `<img class="detail-img" src="${src}" alt="">`;

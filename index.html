@@ -629,7 +629,7 @@
             align-items: center;
             justify-content: center;
             gap: 12px;
-            margin: 24px 0 90px;
+            margin: 24px 0 10px;
         }
 
         #swapButton {
@@ -658,6 +658,16 @@
         #swapButton:disabled {
             opacity: 0.55;
             cursor: wait;
+        }
+
+        #swapHint {
+            display: none;
+            margin: 0 0 90px;
+            color: #8d8da8;
+            font-size: 13px;
+            line-height: 1.6;
+            text-align: center;
+            padding: 0 20px;
         }
 
         #privacyNotice {
@@ -1151,6 +1161,7 @@
         <button id="retry" onclick="resetAll()">再来一张</button>
         <button id="swapButton" type="button" aria-label="一键换脸" title="一键换脸"><span>⇄</span>一键换脸</button>
     </div>
+    <p id="swapHint">换脸在高峰期等待时间会比较久，等待 1 到 5 分钟都属于正常现象。</p>
     <button id="feedbackFab" type="button">反馈意见</button>
     <button id="collectorFab" type="button">上传数据集</button>
     <div id="feedbackModal" aria-hidden="true">
@@ -1225,6 +1236,7 @@
         const retry = document.getElementById('retry');
         const relaxedRetry = document.getElementById('relaxedRetry');
         const swapButton = document.getElementById('swapButton');
+        const swapHint = document.getElementById('swapHint');
         const privacyNotice = document.getElementById('privacyNotice');
         const agreePrivacy = document.getElementById('agreePrivacy');
         const privacyHelp = document.getElementById('privacyHelp');
@@ -1638,6 +1650,7 @@
             dropzone.style.display = 'none';
             clearSwapResult();
             resultActions.style.display = 'none';
+            swapHint.style.display = 'none';
             swapButton.disabled = false;
             lastRecognitionDetails = [];
 
@@ -1717,6 +1730,7 @@
             results.style.display = 'none';
             clearSwapResult();
             resultActions.style.display = 'none';
+            swapHint.style.display = 'none';
             swapButton.disabled = false;
             retry.style.display = 'none';
             relaxedRetry.style.display = 'none';
@@ -1734,6 +1748,7 @@
             resultActions.style.display = 'flex';
             retry.style.display = 'inline-flex';
             swapButton.style.display = 'none';
+            swapHint.style.display = 'none';
             swapButton.disabled = false;
             results.innerHTML = '';
             const message = document.createElement('p');
@@ -1852,14 +1867,16 @@
             resultActions.style.display = 'flex';
             retry.style.display = 'inline-flex';
             swapButton.style.display = showSwap ? 'inline-flex' : 'none';
+            swapHint.style.display = showSwap ? 'block' : 'none';
         }
 
         function showResults(faces, details = [], mode = 'default') {
             loading.style.display = 'none';
             results.style.display = 'block';
             clearSwapResult();
-            setResultActionState(faces.length > 0);
             lastRecognitionDetails = details || [];
+            const swapAllowed = faces.length > 0 && !lastRecognitionDetails.some(detail => detail && detail.easter_egg);
+            setResultActionState(swapAllowed);
             relaxedRetry.style.display = mode !== 'relaxed' && lastUploadBuffer ? 'inline-block' : 'none';
             results.innerHTML = '';
             if (!faces.length) {
@@ -1998,10 +2015,10 @@
                     if (!r.ok) throw new Error(data.error || 'request failed');
                     if (data.status === 'done') return data.result || {};
                     if (data.status === 'failed') throw new Error(data.error || '换脸任务失败');
-                    if (Date.now() - startedAt > 120000) throw new Error('换脸等待超时，请稍后再试');
+                    if (Date.now() - startedAt > 300000) throw new Error('换脸等待超时，请稍后再试');
                     loadingText.textContent = data.status === 'running'
-                        ? '正在换脸中...'
-                        : '排队中，请稍候...';
+                        ? '正在换脸中，高峰期可能需要几分钟...'
+                        : '换脸排队中，高峰期可能需要几分钟...';
                     return new Promise(resolve => {
                         setTimeout(() => resolve(pollSwapJob(jobId, startedAt)), 800);
                     });
@@ -2026,14 +2043,17 @@
         }
 
         function getSwapRecognitionDetails() {
-            return (lastRecognitionDetails || []).map(detail => ({
-                name: detail.name || '',
-                avatar_name: detail.avatar_name || detail.name || '',
-                avatar_project: detail.avatar_project || '',
-                avatar_group: detail.avatar_group || '',
-                avatar_feature_index: detail.avatar_feature_index,
-                bbox: detail.bbox || null,
-            }));
+            return (lastRecognitionDetails || [])
+                .filter(detail => !(detail && detail.easter_egg))
+                .map(detail => ({
+                    name: detail.name || '',
+                    avatar_name: detail.avatar_name || detail.name || '',
+                    avatar_project: detail.avatar_project || '',
+                    avatar_group: detail.avatar_group || '',
+                    avatar_feature_index: detail.avatar_feature_index,
+                    bbox: detail.bbox || null,
+                    easter_egg: detail.easter_egg || '',
+                }));
         }
 
         function resetAll() {
@@ -2046,6 +2066,7 @@
             retry.style.display = 'none';
             relaxedRetry.style.display = 'none';
             swapButton.style.display = 'none';
+            swapHint.style.display = 'none';
             swapButton.disabled = false;
             lastUploadBuffer = null;
             lastOriginalBuffer = null;

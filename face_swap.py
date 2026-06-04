@@ -45,6 +45,8 @@ def swap_faces_insightface(
     codeformer_dir="",
     codeformer_weight=0.7,
     codeformer_face_upsample=False,
+    codeformer_face_upsample_max_faces=1,
+    codeformer_face_upsample_max_pixels=0,
     recognition_details=None,
     swap_image_max_dim=0,
     identity_blend=0.8,
@@ -71,6 +73,11 @@ def swap_faces_insightface(
     )
     if not recognition:
         return None, []
+    if any(
+        isinstance(detail, dict) and detail.get("easter_egg") == "big_brother"
+        for detail in recognition
+    ):
+        raise RuntimeError("该识别结果不支持换脸")
     face_pairs = pair_detected_faces_with_recognition(detected_faces, recognition, img_raw.shape)
     if not face_pairs:
         return None, []
@@ -111,13 +118,22 @@ def swap_faces_insightface(
 
         swap_result = inswapper.get(swap_result, face, blended_source, paste_back=True)
         used_recognition.append(detail)
+
+    restore_face_upsample = bool(codeformer_face_upsample)
+    if restore_face_upsample and codeformer_face_upsample_max_faces > 0:
+        if len(used_recognition) > int(codeformer_face_upsample_max_faces):
+            restore_face_upsample = False
+    if restore_face_upsample and codeformer_face_upsample_max_pixels > 0:
+        if swap_result.shape[0] * swap_result.shape[1] > int(codeformer_face_upsample_max_pixels):
+            restore_face_upsample = False
+
     restored = restore_image(
         swap_result,
         restore_cmd=restore_cmd,
         restore_backend=restore_backend,
         codeformer_dir=codeformer_dir,
         codeformer_weight=codeformer_weight,
-        codeformer_face_upsample=codeformer_face_upsample,
+        codeformer_face_upsample=restore_face_upsample,
     )
     if restored is not None:
         swap_result = restored

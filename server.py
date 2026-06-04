@@ -63,6 +63,8 @@ os.makedirs(FACES_UPLOAD_DIR, exist_ok=True)
 os.makedirs(FEEDBACK_DIR, exist_ok=True)
 os.makedirs(JOBS_DIR, exist_ok=True)
 os.makedirs(JOB_RESULTS_DIR, exist_ok=True)
+SWAP_SAVED_DIR = os.path.join(UPLOADS_DIR, "swap")
+os.makedirs(SWAP_SAVED_DIR, exist_ok=True)
 
 history_lock = threading.Lock()
 RECOGNITION_QUEUE_TIMEOUT = float(os.environ.get("RECOGNITION_QUEUE_TIMEOUT", "30"))
@@ -75,7 +77,7 @@ MAX_SWAP_METADATA_BYTES = 128 * 1024
 MAX_FACE_UPLOAD_BYTES = 80 * 1024 * 1024
 MAX_FACE_UPLOAD_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FEEDBACK_BYTES = 16 * 1024
-JOB_STALE_TIMEOUT = int(os.environ.get("JOB_STALE_TIMEOUT", "120"))
+JOB_STALE_TIMEOUT = int(os.environ.get("JOB_STALE_TIMEOUT", "300"))
 SWAP_DEBUG_OUTPUT = os.environ.get("SWAP_DEBUG_OUTPUT", "0") == "1"
 SWAP_RESTORE_CMD = os.environ.get("SWAP_RESTORE_CMD", "")
 SWAP_RESTORE_BACKEND = os.environ.get("SWAP_RESTORE_BACKEND", "")
@@ -96,9 +98,9 @@ face_groups_cache_data = None
 face_groups_cache_at = 0.0
 HIDDEN_PROJECT = "__hidden__"
 HIDDEN_GROUP = "???"
-BIG_BROTHER_NAME = "立希"
-BIG_BROTHER_TRIGGER_SCORE = 70
-BIG_BROTHER_MESSAGE = "老大哥正在看着你"
+HIDDEN_SPECIAL_NAMES = {"立希", "高松灯", "要乐奈"}
+HIDDEN_SPECIAL_TRIGGER_SCORE = 70
+HIDDEN_SPECIAL_MESSAGE = "老大哥正在看着你"
 DEFAULT_SELECTED_GROUPS = {"bangdream:mygo", "bangdream:avemujica", "bangdream:sumimi"}
 
 
@@ -186,6 +188,32 @@ def job_debug_dir(job_id):
     return os.path.join(JOB_RESULTS_DIR, "debug", safe_path_segment(job_id, "job"))
 
 
+def hidden_easter_egg_code(name, project, groups):
+    if project == HIDDEN_PROJECT and HIDDEN_GROUP in groups and name in HIDDEN_SPECIAL_NAMES:
+        return "big_brother"
+    return ""
+
+
+def apply_hidden_easter_egg(detail):
+    detail = dict(detail)
+    easter_egg = hidden_easter_egg_code(
+        detail.get("name", ""),
+        detail.get("avatar_project") or detail.get("project") or "",
+        parse_values(detail.get("avatar_group") or detail.get("group") or ""),
+    )
+    if easter_egg:
+        detail["easter_egg"] = easter_egg
+        detail["easter_egg_message"] = HIDDEN_SPECIAL_MESSAGE
+    return detail
+
+
+def recognition_has_hidden_entry(details):
+    for detail in details or []:
+        if isinstance(detail, dict) and detail.get("easter_egg") == "big_brother":
+            return True
+    return False
+
+
 def write_job_status(job_id, payload):
     payload = dict(payload)
     payload["job_id"] = job_id
@@ -215,7 +243,11 @@ def read_job_status(job_id):
             if age > JOB_STALE_TIMEOUT:
                 status = dict(status)
                 status["status"] = "failed"
-                status["error"] = "识别任务超时，请重试"
+                job_type = status.get("job_type")
+                if job_type == "swap":
+                    status["error"] = "换脸任务超时，请重试"
+                else:
+                    status["error"] = "识别任务超时，请重试"
                 status["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 try:
                     write_job_status(job_id, status)
@@ -347,7 +379,7 @@ def load_face_groups():
     base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "faces")
     projects = {}
     if not os.path.isdir(base_dir):
-        return {"projects": projects}
+        return load_face_groups_from_features()
     for project in sorted(os.listdir(base_dir)):
         project_path = os.path.join(base_dir, project)
         if not os.path.isdir(project_path) or project.startswith(".") or project == HIDDEN_GROUP:
@@ -378,6 +410,33 @@ def load_face_groups():
                 count_map.pop(group, None)
         if group_map:
             projects[project] = {"groups": group_map, "counts": count_map}
+    return {"projects": projects}
+
+
+def load_face_groups_from_features():
+    features_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "features.npz")
+    projects = {}
+    if not os.path.isfile(features_path):
+        return {"projects": projects}
+    try:
+        data = np.load(features_path, allow_pickle=True)
+    except Exception:
+        return {"projects": projects}
+    if not {"names", "projects", "groups"}.issubset(set(data.files)):
+        return {"projects": projects}
+    names = [str(v) for v in data["names"]]
+    proj_list = [str(v) for v in data["projects"]]
+    group_list = [str(v) for v in data["groups"]]
+    for name, proj, group in zip(names, proj_list, group_list):
+        if proj.startswith("_"):
+            continue
+        if proj not in projects:
+            projects[proj] = {"groups": {}, "counts": {}}
+        if group not in projects[proj]["groups"]:
+            projects[proj]["groups"][group] = []
+            projects[proj]["counts"][group] = {}
+        projects[proj]["groups"][group].append(name)
+        projects[proj]["counts"][group][name] = 0
     return {"projects": projects}
 
 
@@ -436,7 +495,7 @@ def parse_selected_groups(value):
 
 
 def is_hidden_entry(project, groups, name):
-    return project == HIDDEN_PROJECT and HIDDEN_GROUP in groups and name == BIG_BROTHER_NAME
+    return bool(hidden_easter_egg_code(name, project, groups))
 
 
 def display_score(similarity):
@@ -622,6 +681,29 @@ def admin_list_faces_upload():
                 groups[group] = roles
         if groups:
             result[project] = groups
+    return result
+
+
+def admin_list_swap():
+    result = {}
+    if not os.path.isdir(SWAP_SAVED_DIR):
+        return result
+    for day in sorted(os.listdir(SWAP_SAVED_DIR), reverse=True):
+        day_path = os.path.join(SWAP_SAVED_DIR, day)
+        if not os.path.isdir(day_path) or day.startswith("."):
+            continue
+        files = []
+        for fn in sorted(os.listdir(day_path), reverse=True):
+            if fn.startswith(".") or not os.path.splitext(fn)[1].lower() in ALLOWED_IMAGE_EXTENSIONS:
+                continue
+            fp = os.path.join(day_path, fn)
+            try:
+                size = os.path.getsize(fp)
+            except OSError:
+                size = 0
+            files.append({"filename": fn, "size": size})
+        if files:
+            result[day] = files
     return result
 
 
@@ -888,16 +970,11 @@ def recognize_insightface(
         cos_results[valid] = filtered_features[valid] @ vec / denom[valid]
         cos_results = np.nan_to_num(cos_results, nan=-np.inf, posinf=-np.inf, neginf=-np.inf)
 
-        big_brother_idx = next(
-            (
-                idx
-                for idx, name in enumerate(filtered_names)
-                if name == BIG_BROTHER_NAME
-                and is_hidden_entry(filtered_projects[idx], filtered_group_sets[idx], name)
-            ),
-            None,
-        )
-        hidden_indices = {big_brother_idx} if big_brother_idx is not None else set()
+        hidden_indices = {
+            idx
+            for idx, name in enumerate(filtered_names)
+            if is_hidden_entry(filtered_projects[idx], filtered_group_sets[idx], name)
+        }
         raw_max_idx = int(np.argmax(cos_results))
         visible_indices = [idx for idx in range(len(cos_results)) if idx not in hidden_indices]
         if not visible_indices:
@@ -906,11 +983,10 @@ def recognize_insightface(
         max_idx = max(visible_indices, key=lambda idx: cos_results[idx])
         easter_egg_triggered = ""
         if (
-            big_brother_idx is not None
-            and big_brother_idx == raw_max_idx
-            and display_score(cos_results[big_brother_idx]) >= BIG_BROTHER_TRIGGER_SCORE
+            raw_max_idx in hidden_indices
+            and display_score(cos_results[raw_max_idx]) >= HIDDEN_SPECIAL_TRIGGER_SCORE
         ):
-            max_idx = big_brother_idx
+            max_idx = raw_max_idx
             easter_egg_triggered = "big_brother"
 
         top_indices = [
@@ -973,7 +1049,7 @@ def recognize_insightface(
                 "top5": [] if easter_egg_triggered else top5,
                 "easter_egg": easter_egg_triggered,
                 "easter_egg_message": (
-                    BIG_BROTHER_MESSAGE
+                    HIDDEN_SPECIAL_MESSAGE
                     if easter_egg_triggered == "big_brother"
                     else ""
                 ),
@@ -1266,11 +1342,17 @@ class FaceHandler(BaseHTTPRequestHandler):
                     details_payload = payload
             if details_payload:
                 try:
-                    recognition_details = sanitize_recognition_details(
-                        json.loads(details_payload.decode("utf-8"))
-                    )
+                    recognition_details = [
+                        apply_hidden_easter_egg(detail)
+                        for detail in sanitize_recognition_details(
+                            json.loads(details_payload.decode("utf-8"))
+                        )
+                    ]
                 except Exception:
                     recognition_details = []
+            if recognition_has_hidden_entry(recognition_details):
+                self.send_json(400, {"error": "该识别结果不支持换脸"})
+                return
         if not body:
             self.send_json(400, {"error": "empty image"})
             return
@@ -1371,6 +1453,10 @@ class FaceHandler(BaseHTTPRequestHandler):
             if not self.admin_require():
                 return
             self.send_json(200, {"data": admin_list_faces_upload()})
+        elif path == "/admin/api/swap":
+            if not self.admin_require():
+                return
+            self.send_json(200, {"data": admin_list_swap()})
         elif path == "/admin/api/photo_days":
             if not self.admin_require():
                 return
@@ -1432,6 +1518,16 @@ class FaceHandler(BaseHTTPRequestHandler):
             elif ext == ".webp":
                 ct = "image/webp"
             self.send_static_file(abs_path, ct)
+        elif path.startswith("/admin/swap_photo/"):
+            if not self.admin_require():
+                return
+            rel = urllib.parse.unquote(path[len("/admin/swap_photo/"):])
+            abs_path = os.path.normpath(os.path.join(SWAP_SAVED_DIR, rel))
+            if not abs_path.startswith(SWAP_SAVED_DIR) or not os.path.isfile(abs_path):
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_static_file(abs_path, image_content_type(abs_path))
         elif path.startswith("/avatar/"):
             parts = [
                 urllib.parse.unquote(part)
@@ -1638,6 +1734,33 @@ def recognition_job_worker(features_path, job_queue):
             payload = make_recognition_payload(
                 payload, job["relaxed"], job["det_score_threshold"], job["selected_groups"], queue_wait
             )
+
+            now_local = time.localtime()
+            day = daily_key(now_local)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", now_local)
+            photo_name = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}.jpg"
+            photo_dir = daily_upload_dir(day)
+            os.makedirs(photo_dir, exist_ok=True)
+            photo_path = os.path.join(photo_dir, photo_name)
+            photo_relpath = f"uploads/photos/{day}/{photo_name}"
+            nparr = np.frombuffer(job["body"], np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is not None:
+                img = resize_for_recognition(img)
+                if cv2.imwrite(photo_path, img, [cv2.IMWRITE_JPEG_QUALITY, 10]):
+                    append_history(
+                        {
+                            "photo": photo_relpath,
+                            "faces": payload["faces"],
+                            "details": payload.get("details", []),
+                            "mode": "relaxed" if job["relaxed"] else "default",
+                            "groups": sorted(job["selected_groups"]),
+                            "bands": sorted(job["selected_groups"]),
+                            "time": timestamp,
+                        },
+                        day,
+                    )
+
             elapsed = time.time() - started
             write_job_status(
                 job_id,
@@ -1724,6 +1847,14 @@ def swap_job_worker(features_path, job_queue):
                 raise RuntimeError("image encode failed")
             with open(result_path, "wb") as f:
                 f.write(encoded.tobytes())
+            now_local = time.localtime()
+            swap_day = daily_key(now_local)
+            swap_timestamp = time.strftime("%Y%m%d_%H%M%S", now_local)
+            swap_names = "_".join(dict.fromkeys(item["name"] for item in recognition)) if recognition else "unknown"
+            swap_save_dir = os.path.join(SWAP_SAVED_DIR, swap_day)
+            os.makedirs(swap_save_dir, exist_ok=True)
+            swap_save_name = f"{swap_timestamp}_{safe_path_segment(swap_names, 'swap')}_{job_id[:8]}.png"
+            cv2.imwrite(os.path.join(swap_save_dir, swap_save_name), swapped_img)
             elapsed = time.time() - started
             write_job_status(
                 job_id,
